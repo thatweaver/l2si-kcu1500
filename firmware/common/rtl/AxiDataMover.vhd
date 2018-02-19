@@ -2,7 +2,7 @@
 -- File       : AxiDataMover.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2018-01-26
+-- Last update: 2018-01-29
 -------------------------------------------------------------------------------
 -- Description: Wrapper for Xilinx Axi Data Mover
 -- Axi stream input (dscReadMasters.command) launches an AxiReadMaster to
@@ -33,7 +33,8 @@ use work.AxiDescPkg.all;
 entity AxiDataMover is
    generic (  LANES_G          : integer          := 4;
               NAPP_G           : integer          := 1;
-              AXIL_BASE_ADDR_G : slv(31 downto 0) := x"00000000" );
+              AXIL_BASE_ADDR_G : slv(31 downto 0) := x"00000000";
+              AXI_ERROR_RESP_G : slv(1 downto 0)  := AXI_RESP_DECERR_C );
    port    ( -- Clock and reset
              axiClk           : in  sl; -- 200MHz
              axiRst           : in  sl; -- need a user reset to clear the pipeline
@@ -99,7 +100,7 @@ architecture mapping of AxiDataMover is
       m_axis_s2mm_cmdsts_aresetn : IN STD_LOGIC;
       s_axis_s2mm_cmd_tvalid : IN STD_LOGIC;
       s_axis_s2mm_cmd_tready : OUT STD_LOGIC;
-      s_axis_s2mm_cmd_tdata : IN STD_LOGIC_VECTOR(87 DOWNTO 0);
+      s_axis_s2mm_cmd_tdata : IN STD_LOGIC_VECTOR(79 DOWNTO 0);
       m_axis_s2mm_sts_tvalid : OUT STD_LOGIC;
       m_axis_s2mm_sts_tready : IN STD_LOGIC;
       m_axis_s2mm_sts_tdata : OUT STD_LOGIC_VECTOR(7 DOWNTO 0);
@@ -131,6 +132,10 @@ architecture mapping of AxiDataMover is
       );
   END COMPONENT;
 
+  type Slv512Array is array (natural range <>) of slv(511 downto 0);
+
+  signal axiRstN : sl;
+  
   --  Assumes 40b memory addresses
   signal intDscReadMasters  : AxiDescMasterArray(LANES_G-1 downto 0);
   signal intDscReadSlaves   : AxiDescSlaveArray (LANES_G-1 downto 0);
@@ -142,26 +147,36 @@ architecture mapping of AxiDataMover is
   signal intMasters_tdata : Slv512Array         (LANES_G-1 downto 0);
   signal intMasters_tkeep : Slv64Array          (LANES_G-1 downto 0);
 
+  signal dinTransfer    : Slv23Array(LANES_G-1 downto 0);
   signal doutTransfer   : Slv23Array(LANES_G-1 downto 0);
+  signal dcountTransfer : Slv4Array (LANES_G-1 downto 0);
+  signal rdTransfer     : slv       (LANES_G-1 downto 0);
   signal validTransfer  : slv       (LANES_G-1 downto 0);
-  signal doutReadAddr   : Slv40Array(LANES_G-1 downto 0);
-  signal validReadAddr  : slv       (LANES_G-1 downto 0);
+  signal fullTransfer   : slv       (LANES_G-1 downto 0);
+  signal wrTransfer     : slv       (LANES_G-1 downto 0);
 
   --  Assumes 16b buffer ids
   constant NAPP_C : integer := NAPP_G;
-  signal addrRamAddr    : Slv16Array(NAPP_C-1 downto 0);
-  signal addrRamDout    : Slv40Array(NAPP_C-1 downto 0);
+  signal addrRamAddr    : Slv12Array(NAPP_C-1 downto 0);
+  signal dcountRamAddr  : Slv12Array(NAPP_C-1 downto 0);
+  signal rdRamAddr      : slv       (NAPP_C-1 downto 0);
   signal validRamAddr   : slv       (NAPP_C-1 downto 0);
   signal doutRamAddr    : Slv40Array(NAPP_C-1 downto 0);
-  signal doutWriteDesc  : Slv16Array(NAPP_C-1 downto 0);
+  signal doutWriteDesc  : Slv36Array(NAPP_C-1 downto 0);
+  signal dcountWriteDesc: Slv4Array (NAPP_C-1 downto 0);
+  signal rdWriteDesc    : slv       (NAPP_C-1 downto 0);
   signal validWriteDesc : slv       (NAPP_C-1 downto 0);
   
   constant NUM_AXIL_MASTERS_C : integer := NAPP_C+1;
+  signal sAxilReadMaster  : AxiLiteReadMasterType;
+  signal sAxilReadSlave   : AxiLiteReadSlaveType;
+  signal sAxilWriteMaster : AxiLiteWriteMasterType;
+  signal sAxilWriteSlave  : AxiLiteWriteSlaveType;
   signal axilReadMasters  : AxiLiteReadMasterArray (NUM_AXIL_MASTERS_C-1 downto 0);
   signal axilReadSlaves   : AxiLiteReadSlaveArray  (NUM_AXIL_MASTERS_C-1 downto 0);
   signal axilWriteMasters : AxiLiteWriteMasterArray(NUM_AXIL_MASTERS_C-1 downto 0);
   signal axilWriteSlaves  : AxiLiteWriteSlaveArray (NUM_AXIL_MASTERS_C-1 downto 0);
-  constant AXIL_CROSSBAR_MASTERS_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXIL_MASTERS_C-1 downto 0) := genAxiLiteConfig( NUM_AXIL_MASTERS_C, AXIL_BASE_ADDR_G, 12, 16);
+  constant AXIL_CROSSBAR_MASTERS_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXIL_MASTERS_C-1 downto 0) := genAxiLiteConfig( NUM_AXIL_MASTERS_C, AXIL_BASE_ADDR_G, 18, 15);
   
   type RegType is record
     axilWriteSlave : AxiLiteWriteSlaveType;
@@ -170,31 +185,58 @@ architecture mapping of AxiDataMover is
     wrFifoWr       : slv                 (NAPP_C-1 downto 0);
     rdTransfer     : slv                 (NAPP_C-1 downto 0);
     rdRamAddr      : slv                 (NAPP_C-1 downto 0);
+    wrDesc         : slv                 (NAPP_C-1 downto 0);
+    wrDescDin      : slv                 (35 downto 0);
+    rdDesc         : slv                 (NAPP_C-1 downto 0);
     laneGate       : integer range 0 to NAPP_C-1; 
     app            : Slv4Array           (LANES_G-1 downto 0);
     writeMasters   : AxiStreamMasterArray(LANES_G-1 downto 0); -- command stream
     writeSlaves    : AxiStreamSlaveArray (LANES_G-1 downto 0); -- status stream
+    wrBaseAddr     : Slv64Array          (NAPP_C-1 downto 0);
+    wrIndex        : Slv12Array          (NAPP_C-1 downto 0);
     axiBusy        : sl;
+    axiWriteMaster : AxiWriteMasterType;
   end record;
 
   constant REG_INIT_C : RegType := (
     axilWriteSlave => AXI_LITE_WRITE_SLAVE_INIT_C,
     axilReadSlave  => AXI_LITE_READ_SLAVE_INIT_C,
     fifoDin        => (others=>'0'),
-    rdFifoWr       => (others=>'0'),
     wrFifoWr       => (others=>'0'),
     rdTransfer     => (others=>'0'),
     rdRamAddr      => (others=>'0'),
+    wrDesc         => (others=>'0'),
+    wrDescDin      => (others=>'0'),
+    rdDesc         => (others=>'0'),
     laneGate       => 0,
     app            => (others=>(others=>'1')),
-    writeMasters   => (others=>AXI_STREAM_MASTER_INIT_C),
+    writeMasters   => (others=>axiStreamMasterInit(DESC_STREAM_CONFIG_INIT_C)),
     writeSlaves    => (others=>AXI_STREAM_SLAVE_INIT_C),
-    axiBusy        => '0');
+    wrBaseAddr     => (others=>(others=>'0')),
+    wrIndex        => (others=>(others=>'0')),
+    axiBusy        => '0',
+    axiWriteMaster => AXI_WRITE_MASTER_INIT_C );
 
   signal r   : RegType := REG_INIT_C;
   signal rin : RegType;
   
 begin
+
+  axiRstN                  <= not axiRst;
+  axiWriteMasters(LANES_G) <= r.axiWriteMaster;
+
+  U_AxilAsync : entity work.AxiLiteAsync
+    port map ( sAxiClk         => axilClk,
+               sAxiClkRst      => axilRst,
+               sAxiReadMaster  => axilReadMaster,
+               sAxiReadSlave   => axilReadSlave,
+               sAxiWriteMaster => axilWriteMaster,
+               sAxiWriteSlave  => axilWriteSlave,
+               mAxiClk         => axiClk,
+               mAxiReadMaster  => sAxilReadMaster,
+               mAxiReadSlave   => sAxilReadSlave,
+               mAxiWriteMaster => sAxilWriteMaster,
+               mAxiWriteSlave  => sAxilWriteSlave );
 
   U_AxilCrossbar : entity work.AxiLiteCrossbar
     generic map ( NUM_SLAVE_SLOTS_G  => 1,
@@ -202,10 +244,10 @@ begin
                   MASTERS_CONFIG_G   => AXIL_CROSSBAR_MASTERS_CONFIG_C )
     port map    ( axiClk        => axiClk,
                   axiClkRst     => axiRst,
-                  sAxiWriteMasters(0) => axilWriteMaster,
-                  sAxiWriteSlaves (0) => axilWriteSlave,
-                  sAxiReadMasters (0) => axilReadMaster,
-                  sAxiReadSlaves  (0) => axilReadSlave,
+                  sAxiWriteMasters(0) => sAxilWriteMaster,
+                  sAxiWriteSlaves (0) => sAxilWriteSlave,
+                  sAxiReadMasters (0) => sAxilReadMaster,
+                  sAxiReadSlaves  (0) => sAxilReadSlave,
                   mAxiWriteMasters    => axilWriteMasters,
                   mAxiWriteSlaves     => axilWriteSlaves,
                   mAxiReadMasters     => axilReadMasters,
@@ -215,63 +257,63 @@ begin
 
     U_ADM : MigToPcie
       port map ( m_axi_mm2s_aclk            => axiClk,
-                 m_axi_mm2s_aresetn         => axiRst,
+                 m_axi_mm2s_aresetn         => axiRstN,
                  mm2s_err                   => open,
                  m_axis_mm2s_cmdsts_aclk    => axiClk,
-                 m_axis_mm2s_cmdsts_aresetn => axiRst,
+                 m_axis_mm2s_cmdsts_aresetn => axiRstN,
                  s_axis_mm2s_cmd_tvalid     => intDscReadMasters(i).command.tValid,
                  s_axis_mm2s_cmd_tready     => intDscReadSlaves(i).command .tReady,
                  s_axis_mm2s_cmd_tdata      => intDscReadMasters(i).command.tData(79 DOWNTO 0),
                  m_axis_mm2s_sts_tvalid     => intDscReadSlaves(i) .status.tValid,
                  m_axis_mm2s_sts_tready     => intDscReadMasters(i).status.tReady,
-                 m_axis_mm2s_sts_tdata      => intDscReadSlaves(i).status.tData(7 DOWNTO 0);
-                 m_axis_mm2s_sts_tkeep      => intDscReadSlaves(i).status.tKeep(0 DOWNTO 0);
+                 m_axis_mm2s_sts_tdata      => intDscReadSlaves(i).status.tData(7 DOWNTO 0),
+                 m_axis_mm2s_sts_tkeep      => intDscReadSlaves(i).status.tKeep(0 DOWNTO 0),
                  m_axis_mm2s_sts_tlast      => intDscReadSlaves(i).status.tLast,
-                 m_axi_mm2s_arid            => axiReadMasters(i).arid,
-                 m_axi_mm2s_araddr          => axiReadMasters(i).araddr,
+                 m_axi_mm2s_arid            => axiReadMasters(i).arid(3 downto 0),
+                 m_axi_mm2s_araddr          => axiReadMasters(i).araddr(37 downto 0),
                  m_axi_mm2s_arlen           => axiReadMasters(i).arlen,
                  m_axi_mm2s_arsize          => axiReadMasters(i).arsize,
                  m_axi_mm2s_arburst         => axiReadMasters(i).arburst,
                  m_axi_mm2s_arprot          => axiReadMasters(i).arprot,
                  m_axi_mm2s_arcache         => axiReadMasters(i).arcache,
-                 m_axi_mm2s_aruser          => axiReadMasters(i).aruser,
+--                 m_axi_mm2s_aruser          => axiReadMasters(i).aruser,
                  m_axi_mm2s_arvalid         => axiReadMasters(i).arvalid,
                  m_axi_mm2s_arready         => axiReadSlaves(i) .arready,
-                 m_axi_mm2s_rdata           => axiReadSlaves(i) .rdata,
+                 m_axi_mm2s_rdata           => axiReadSlaves(i) .rdata(511 downto 0),
                  m_axi_mm2s_rresp           => axiReadSlaves(i) .rresp,
                  m_axi_mm2s_rlast           => axiReadSlaves(i) .rlast,
                  m_axi_mm2s_rvalid          => axiReadSlaves(i) .rvalid,
                  m_axi_mm2s_rready          => axiReadMasters(i).rready,
-                 m_axis_mm2s_tdata          => intMasters_tdata(i),
+                 m_axis_mm2s_tdata          => intMasters_tdata(i)(511 downto 0),
                  m_axis_mm2s_tkeep          => intMasters_tkeep(i),
                  m_axis_mm2s_tlast          => intMasters(i).tLast,
                  m_axis_mm2s_tvalid         => intMasters(i).tValid,
                  m_axis_mm2s_tready         => intSlaves(i) .tReady,
                  m_axi_s2mm_aclk            => axiClk,
-                 m_axi_s2mm_aresetn         => axiRst,
+                 m_axi_s2mm_aresetn         => axiRstN,
                  s2mm_err                   => open,
                  m_axis_s2mm_cmdsts_awclk   => axiClk,
-                 m_axis_s2mm_cmdsts_aresetn => axiRst,
-                 s_axis_s2mm_cmd_tvalid     => r.writeMasters(i).command.tValid,
+                 m_axis_s2mm_cmdsts_aresetn => axiRstN,
+                 s_axis_s2mm_cmd_tvalid     => r.writeMasters(i).tValid,
                  s_axis_s2mm_cmd_tready     => intDscWriteSlaves(i).command.tReady,
-                 s_axis_s2mm_cmd_tdata      => r.writeMasters(i).command.tData(79 DOWNTO 0);
+                 s_axis_s2mm_cmd_tdata      => r.writeMasters(i).tData(79 DOWNTO 0),
                  m_axis_s2mm_sts_tvalid     => intDscWriteSlaves(i) .status.tValid,
                  m_axis_s2mm_sts_tready     => intDscWriteMasters(i).status.tReady,
-                 m_axis_s2mm_sts_tdata      => intDscWriteSlaves(i) .status.tData(7 DOWNTO 0);
-                 m_axis_s2mm_sts_tkeep      => intDscWriteSlaves(i) .status.tKeep(0 DOWNTO 0);
+                 m_axis_s2mm_sts_tdata      => intDscWriteSlaves(i) .status.tData(7 DOWNTO 0),
+                 m_axis_s2mm_sts_tkeep      => intDscWriteSlaves(i) .status.tKeep(0 DOWNTO 0),
                  m_axis_s2mm_sts_tlast      => intDscWriteSlaves(i) .status.tLast,
-                 m_axi_s2mm_awid            => axiWriteMasters(i).awid,
-                 m_axi_s2mm_awaddr          => axiWriteMasters(i).awaddr,
+                 m_axi_s2mm_awid            => axiWriteMasters(i).awid(3 downto 0),
+                 m_axi_s2mm_awaddr          => axiWriteMasters(i).awaddr(37 downto 0),
                  m_axi_s2mm_awlen           => axiWriteMasters(i).awlen,
                  m_axi_s2mm_awsize          => axiWriteMasters(i).awsize,
                  m_axi_s2mm_awburst         => axiWriteMasters(i).awburst,
                  m_axi_s2mm_awprot          => axiWriteMasters(i).awprot,
                  m_axi_s2mm_awcache         => axiWriteMasters(i).awcache,
-                 m_axi_s2mm_awuser          => axiWriteMasters(i).awuser,
+--                 m_axi_s2mm_awuser          => axiWriteMasters(i).awuser,
                  m_axi_s2mm_awvalid         => axiWriteMasters(i).awvalid,
                  m_axi_s2mm_awready         => axiWriteSlaves(i) .awready,
-                 m_axi_s2mm_wdata           => axiWriteMasters(i).wdata,
-                 m_axi_s2mm_wstrb           => axiWriteMasters(i).wstrb,
+                 m_axi_s2mm_wdata           => axiWriteMasters(i).wdata(511 downto 0),
+                 m_axi_s2mm_wstrb           => axiWriteMasters(i).wstrb(63 downto 0),
                  m_axi_s2mm_wlast           => axiWriteMasters(i).wlast,
                  m_axi_s2mm_wvalid          => axiWriteMasters(i).wvalid,
                  m_axi_s2mm_wready          => axiWriteSlaves(i) .wready,
@@ -282,39 +324,42 @@ begin
                  s_axis_s2mm_tkeep          => intMasters_tkeep(i),
                  s_axis_s2mm_tlast          => intMasters(i).tLast,
                  s_axis_s2mm_tvalid         => intMasters(i).tValid,
-                 s_axis_s2mm_tready         => intSlaves(i) .tReady,
+                 s_axis_s2mm_tready         => intSlaves(i) .tReady
                  );
     --
     --  Keep a (small) FIFO of transfer lengths to attach to write commands
     --
 
-    process ( dscReadMasters, fullTransfer ) is
+    process ( dscReadMasters, intDscReadSlaves, fullTransfer ) is
     begin
       intDscReadMasters(i)                <= dscReadMasters(i);
-      intDscReadMasters(i).command.tValid <= dscReadMasters(i).command and not fullTransfer(i);
-      dscReadSlaves    (i)                <= intDscReadSlaves;
+      intDscReadMasters(i).command.tValid <= dscReadMasters(i).command.tValid and not fullTransfer(i);
+      dscReadSlaves    (i)                <= intDscReadSlaves(i);
     end process;
     
-    wrTransfer(i) <= intDscReadMasters(i).command.tValid and intDscReadSlaves(i).command.tReady;
-
+    wrTransfer (i) <= intDscReadMasters(i).command.tValid and intDscReadSlaves(i).command.tReady;
+    dinTransfer(i) <= dscReadMasters(i).command.tData(22 downto 0);
+    
     U_TransferFifo : entity work.FifoSync
       generic map ( DATA_WIDTH_G => 23,
-                    FWFT_G       => true )
-      port map ( rst     => axiRst,
-                 clk     => axiClk,
-                 wr_en   => wrTransfer    (i),
-                 din     => dscReadMasters(i).tData(22 downto 0),
-                 rd_en   => rin.rdTransfer(i),
-                 dout    => doutTransfer  (i),
-                 valid   => validTransfer (i),
-                 full    => fullTransfer  (i));
+                    ADDR_WIDTH_G =>  4,
+                    FWFT_EN_G    => true )
+      port map ( rst        => axiRst,
+                 clk        => axiClk,
+                 wr_en      => wrTransfer    (i),
+                 din        => dinTransfer   (i),
+                 data_count => dcountTransfer(i),
+                 rd_en      => rdTransfer    (i),
+                 dout       => doutTransfer  (i),
+                 valid      => validTransfer (i),
+                 full       => fullTransfer  (i));
   end generate;
 
   GEN_APP : for i in 0 to NAPP_C-1 generate
     U_WrAddrRam : entity work.AxiDualPortRam
-      generic map ( TPD_G => TPD_G,
-                    REG_EN_G     => true,
+      generic map ( REG_EN_G     => true,
                     BRAM_EN_G    => true,
+                    AXI_WR_EN_G  => true,
                     COMMON_CLK_G => true,
                     ADDR_WIDTH_G => 12,
                     DATA_WIDTH_G => 40)
@@ -328,51 +373,65 @@ begin
         clk            => axiClk,
         rst            => axiRst,
         addr           => addrRamAddr(i),
-        dout           => doutRamAddr(i));
+        dout           => doutRamAddr(i) );
     
     -- For receive
     U_WriteFifoIn : entity work.FifoSync
-      generic map ( DATA_WIDTH_G => 16,
+      generic map ( DATA_WIDTH_G => 12,
                     ADDR_WIDTH_G => 12,
-                    FWFT_G       => true )
-      port map ( rst     => axiRst,
-                 clk     => axiClk,
-                 wr_en   => r.wrFifoWr(i),
-                 din     => r.fifoDin,
-                 rd_en   => rin.rdRamAddr  (i),
-                 dout    => addrRamAddr    (i),
-                 valid   => validRamAddr   (i));
+                    FWFT_EN_G    => true )
+      port map ( rst        => axiRst,
+                 clk        => axiClk,
+                 wr_en      => r.wrFifoWr     (i),
+                 din        => r.fifoDin      (11 downto 0),
+                 data_count => dcountRamAddr  (i),
+                 rd_en      => rdRamAddr      (i),
+                 dout       => addrRamAddr    (i),
+                 valid      => validRamAddr   (i) );
 
     U_WriteFifoDesc : entity work.FifoSync
       generic map ( DATA_WIDTH_G => 36,
                     ADDR_WIDTH_G => 4,
-                    FWFT_G       => true )
-      port map ( rst     => axiRst,
-                 clk     => axiClk,
-                 wr_en   => r.wrDesc       (i),
-                 din     => r.wrDescDin,
-                 rd_en   => rin.rdWriteDesc(i),
-                 dout    => doutWriteDesc  (i),
-                 valid   => validWriteDesc (i));
+                    FWFT_EN_G    => true )
+      port map ( rst        => axiRst,
+                 clk        => axiClk,
+                 wr_en      => r.wrDesc       (i),
+                 din        => r.wrDescDin,
+                 data_count => dcountWriteDesc(i),
+                 rd_en      => rdWriteDesc    (i),
+                 dout       => doutWriteDesc  (i),
+                 valid      => validWriteDesc (i));
   end generate;
-    
+
+  rdTransfer  <= rin.rdTransfer;
+  rdRamAddr   <= rin.rdRamAddr;
+  rdWriteDesc <= rin.rdDesc;
+
+  GEN_DESC_WRITE_MASTERS : for i in 0 to LANES_G-1 generate
+    intDscWriteMasters(i).command <= r.writeMasters(i);
+    intDscWriteMasters(i).status  <= rin.writeSlaves(i);
+  end generate;
+      
   comb : process ( r, axiRst, 
-                   dscWriteMasters, 
-                   doutTransfer , validTransfer,
-                   doutRamAddr  , validRamAddr,
-                   doutWriteDesc, validWriteDesc,
+                   doutTransfer , validTransfer , dcountTransfer ,
+                   doutRamAddr  , validRamAddr  , dcountRamAddr  ,
+                   doutWriteDesc, validWriteDesc, dcountWriteDesc,
+                   intDscWriteSlaves, axiWriteSlaves,
                    axilWriteMasters, axilReadMasters ) is
       variable v : RegType;
       variable regCon : AxiLiteEndPointType;
       variable regAddr : slv(11 downto 0);
-      variable app     : integer;
+      variable i, app  : integer;
     begin
       v := r;
 
       v.rdTransfer  := (others=>'0');
       v.rdRamAddr   := (others=>'0');
-      v.rdReadAddr  := (others=>'0');
-
+      v.wrDesc      := (others=>'0');
+      v.wrFifoWr    := (others=>'0');
+      v.rdDesc      := (others=>'0');
+      v.axiWriteMaster.bready := '1';
+      
        -- Start transaction block
       axiSlaveWaitTxn(regCon, axilWriteMasters(0), axilReadMasters(0), v.axilWriteSlave, v.axilReadSlave);
 
@@ -380,14 +439,23 @@ begin
       --
       --   Push DMA addresses to the FIFOs associated with each application
       for i in 0 to NAPP_C-1 loop
-        regAddr := toSlv(i*4, 12);
+        regAddr := toSlv(i*16, 12);
+        axiSlaveRegister(regCon, regAddr, 0, v.wrBaseAddr(i)(31 downto  0));
+        regAddr := regAddr + 4;
+        axiSlaveRegister(regCon, regAddr, 0, v.wrBaseAddr(i)(39 downto 32));
+        regAddr := regAddr + 4;
         axiSlaveRegister(regCon, regAddr, 0, v.fifoDin);
         axiWrDetect     (regCon, regAddr, v.wrFifoWr(i));
+        regAddr := regAddr + 4;
+        axiSlaveRegisterR(regCon, regAddr, 0, dcountRamAddr(i));
+        axiSlaveRegisterR(regCon, regAddr,16, dcountWriteDesc(i));
       end loop;
 
       for i in 0 to LANES_G-1 loop
-        regAddr := toSlv(32+i*4,12);
-        axiSlaveRegister(regCon, regAddr, 0, v.app);
+        regAddr := toSlv(128+i*8,12);
+        axiSlaveRegister(regCon, regAddr, 0, v.app(i));
+        regAddr := regAddr + 4;
+        axiSlaveRegisterR(regCon, regAddr, 0, dcountTransfer (i));
       end loop;
       
       -- End transaction block
@@ -398,32 +466,41 @@ begin
 
       -- Loop over lanes
       for i in 0 to LANES_G-1 loop
-        if intDscWriteSlaves(i).tReady = '1' then
+        if intDscWriteSlaves(i).command.tReady = '1' then
           v.writeMasters(i).tValid := '0';
         end if;
-        v.writeSlaves(i).tReady := '0';
+        if r.writeSlaves(i).tReady = '1' then
+          v.writeSlaves(i).tReady := '0';
+        end if;
       end loop;
 
       --   Serialize access to the application FIFOs
       --  Allocate each clock to one lane's arbitration
       i          := r.laneGate;
       app        := conv_integer(r.app(i));
-      v.laneGate := r.laneGate+1;
+      if r.laneGate = NAPP_C-1 then
+        v.laneGate := 0;
+      else
+        v.laneGate := r.laneGate+1;
+      end if;
 
       --   Queue the write address to the data mover engine when a new
       --   transfer is waiting and a target buffer is available.
       if (v.writeMasters(i).tValid = '0' and
           validTransfer(i) = '1' and
-          validWriteAddr(app) = '1' and
+          validRamAddr(app) = '1' and
           app < NAPP_C) then
         v.writeMasters(i).tValid := '1';
         v.writeMasters(i).tLast  := '1';
-        v.writeMasters(i).tData(87 downto 0) :=
-          toSlv(0,12) & toSlv(app,4) & doutWriteAddr(app) &
-          '0' & '1' & "000000" & '0' & doutTransfer(i);
-        v.writeMasters(i).tKeep(10 downto 0) := (others=>'1');
+        v.writeMasters(i).tData(79 downto 0) := x"0" & toSlv(app,4) &
+                                                doutRamAddr(app) &
+                                                "01" & toSlv(0,6) &
+                                                '1' & doutTransfer(i);
         v.rdTransfer(i) := '1';
         v.rdRamAddr(app) := '1';
+        v.wrDescDin(35 downto 12) := '0' & doutTransfer(i);
+        v.wrDescDin(11 downto  0) := addrRamAddr(app);
+        v.wrDesc(app) := '1';
       end if;
 
       --  Reset strobing signals
@@ -435,9 +512,9 @@ begin
         v.axiWriteMaster.wvalid  := '0';
         v.axiWriteMaster.wlast   := '0';
       end if;
-      
+
       --  Translate the write status to a descriptor axi write
-      if axiBusy(i) = '0' then
+      if r.axiBusy = '0' then
         if (intDscWriteSlaves(i).status.tValid = '1' and
             validWriteDesc(app) = '1') then
           -- Write address channel
@@ -459,10 +536,10 @@ begin
 
           v.axiWriteMaster.awvalid := '1';
           v.axiWriteMaster.wvalid  := '1';
-          v.wrIndex(app)           := r.rdIndex(app) + 1;
+          v.wrIndex(app)           := r.wrIndex(app) + 1;
           v.axiBusy                := '1';
 
-          v.rdWriteDesc(app)       := '1';
+          v.rdDesc(app)            := '1';
           v.writeSlaves(i).tReady  := '1';
         end if;
       else
@@ -478,10 +555,6 @@ begin
       
       rin <= v;
 
-      for i in 0 to LANES_G-1 loop
-        intDscWriteMasters(i).command <= r.writeMasters(i);
-        intDscWriteMasters(i).status  <= rin.writeSlaves(i);
-      end loop;
     end process comb;
 
     seq: process(axiClk) is

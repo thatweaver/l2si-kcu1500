@@ -2,7 +2,7 @@
 -- File       : AxiPcieReg.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2018-01-23
+-- Last update: 2018-02-12
 -------------------------------------------------------------------------------
 -- Description: AXI-Lite Crossbar and Register Access
 -------------------------------------------------------------------------------
@@ -33,8 +33,7 @@ entity AxiPcieReg is
       BOOT_PROM_G      : string                 := "BPI";
       DRIVER_TYPE_ID_G : slv(31 downto 0)       := x"00000000";
       EN_DEVICE_DNA_G  : boolean                := true;
-      AXI_ERROR_RESP_G : slv(1 downto 0)        := AXI_RESP_OK_C;
-      DMA_SIZE_G       : positive range 1 to 16 := 1);
+      AXI_ERROR_RESP_G : slv(1 downto 0)        := AXI_RESP_OK_C );
    port (
       -- AXI4 Interfaces
       axiClk             : in  sl;
@@ -43,11 +42,6 @@ entity AxiPcieReg is
       regReadSlave       : out AxiReadSlaveType;
       regWriteMaster     : in  AxiWriteMasterType;
       regWriteSlave      : out AxiWriteSlaveType;
-      -- DMA AXI-Lite Interfaces [0x00020000:0x0002FFFF]
-      dmaCtrlReadMaster  : out AxiLiteReadMasterType;
-      dmaCtrlReadSlave   : in  AxiLiteReadSlaveType;
-      dmaCtrlWriteMaster : out AxiLiteWriteMasterType;
-      dmaCtrlWriteSlave  : in  AxiLiteWriteSlaveType;
       -- PHY AXI-Lite Interfaces [0x00030000:0x0003FFFF]
       phyReadMaster      : out AxiLiteReadMasterType;
       phyReadSlave       : in  AxiLiteReadSlaveType;
@@ -86,37 +80,31 @@ architecture mapping of AxiPcieReg is
    constant USE_SPI : boolean := MASTER_G and (BOOT_PROM_G = "SPI");
    constant USE_BPI : boolean := MASTER_G and (BOOT_PROM_G = "BPI");
 
-   constant DMA_INDEX_C     : natural := 0;
+   constant VERSION_INDEX_C : natural := 0;
    constant PHY_INDEX_C     : natural := 1;
-   constant VERSION_INDEX_C : natural := 2;
-   constant PROM_INDEX_C    : natural := 3;
-   constant APP_INDEX_C     : natural := ite(USE_SPI, 5, ite(USE_BPI, 4, 3));
+   constant PROM_INDEX_C    : natural := 2;
+   constant APP_INDEX_C     : natural := ite(USE_SPI, 4, ite(USE_BPI, 3, 2));
 
    constant NUM_AXI_MASTERS_C : natural := APP_INDEX_C+1;
    
-   constant DMA_ADDR_C     : slv(31 downto 0) := x"00000000";
+   constant VERSION_ADDR_C : slv(31 downto 0) := x"00000000";
    constant PHY_ADDR_C     : slv(31 downto 0) := x"00010000";
-   constant VERSION_ADDR_C : slv(31 downto 0) := x"00020000";
    constant BPI_ADDR_C     : slv(31 downto 0) := x"00030000";
    constant SPI0_ADDR_C    : slv(31 downto 0) := x"00040000";
    constant SPI1_ADDR_C    : slv(31 downto 0) := x"00050000";
    constant APP_ADDR_C     : slv(31 downto 0) := x"00800000";
 
-   function axilMasterConfig() return AxiLiteCrossbarMasterConfigArray is
-     variable ret : AxiLiteMasterConfigArray(NUM_AXI_MASTERS_C-1 downto 0);
+   function axilMasterConfig(constant n : integer) return AxiLiteCrossbarMasterConfigArray is
+     variable ret : AxiLiteCrossbarMasterConfigArray(n-1 downto 0);
      variable i   : integer;
    begin
-     ret(DMA_INDEX_C).baseAddr     := DMA_ADDR_C;
-     ret(DMA_INDEX_C).addrBits     := 16;
-     ret(DMA_INDEX_C).connectivity := x"FFFF";
+     ret(VERSION_INDEX_C).baseAddr     := VERSION_ADDR_C;
+     ret(VERSION_INDEX_C).addrBits     := 16;
+     ret(VERSION_INDEX_C).connectivity := x"FFFF";
 
      ret(PHY_INDEX_C).baseAddr     := PHY_ADDR_C;
      ret(PHY_INDEX_C).addrBits     := 16;
      ret(PHY_INDEX_C).connectivity := x"FFFF";
-
-     ret(VERSION_INDEX_C).baseAddr     := VERSION_ADDR_C;
-     ret(VERSION_INDEX_C).addrBits     := 16;
-     ret(VERSION_INDEX_C).connectivity := x"FFFF";
 
      if (USE_BPI) then
        ret(PROM_INDEX_C).baseAddr     := BPI_ADDR_C;
@@ -133,13 +121,13 @@ architecture mapping of AxiPcieReg is
      end if;
 
      ret(APP_INDEX_C).baseAddr     := APP_ADDR_C;
-     ret(APP_INDEX_C).addrBits     := 16;
+     ret(APP_INDEX_C).addrBits     := 23;
      ret(APP_INDEX_C).connectivity := x"FFFF";
 
      return ret;
    end function;
                                   
-   constant AXI_CROSSBAR_MASTERS_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXI_MASTERS_C-1 downto 0) := axilMasterConfig();
+   constant AXI_CROSSBAR_MASTERS_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXI_MASTERS_C-1 downto 0) := axilMasterConfig(NUM_AXI_MASTERS_C);
 
    signal axilReadMaster  : AxiLiteReadMasterType;
    signal maskReadMaster  : AxiLiteReadMasterType;
@@ -164,6 +152,7 @@ architecture mapping of AxiPcieReg is
                                                   ite(BOOT_PROM_G = "BPI", x"00000000",
                                                       ite(BOOT_PROM_G = "SPI", x"00000001", x"FFFFFFFF")),
                                                   x"FFFFFFFF");
+
 begin
 
    ---------------------------------------------------------------------------------------------
@@ -172,7 +161,7 @@ begin
    process(appReset)
       variable i : natural;
    begin
-      userValues(0) <= toSlv(DMA_SIZE_G, 32);
+      userValues(0) <= toSlv(0, 32);
       userValues(1) <= x"00000001";
       userValues(2) <= DRIVER_TYPE_ID_G;
 
@@ -346,10 +335,10 @@ begin
                busyIn         => spiBusyIn(i),
                busyOut        => spiBusyOut(i),
                -- AXI-Lite Register Interface
-               axiReadMaster  => axilReadMasters (SPI0_INDEX_C+i),
-               axiReadSlave   => axilReadSlaves  (SPI0_INDEX_C+i),
-               axiWriteMaster => axilWriteMasters(SPI0_INDEX_C+i),
-               axiWriteSlave  => axilWriteSlaves (SPI0_INDEX_C+i),
+               axiReadMaster  => axilReadMasters (PROM_INDEX_C+i),
+               axiReadSlave   => axilReadSlaves  (PROM_INDEX_C+i),
+               axiWriteMaster => axilWriteMasters(PROM_INDEX_C+i),
+               axiWriteSlave  => axilWriteSlaves (PROM_INDEX_C+i),
                -- Clocks and Resets
                axiClk         => axiClk,
                axiRst         => axiRst);
@@ -369,14 +358,6 @@ begin
       end generate GEN_VEC;
 
    end generate;
-
-   ---------------------------------
-   -- Map the AXI-Lite to DMA Engine
-   ---------------------------------
-   dmaCtrlWriteMaster           <= axilWriteMasters(DMA_INDEX_C);
-   axilWriteSlaves(DMA_INDEX_C) <= dmaCtrlWriteSlave;
-   dmaCtrlReadMaster            <= axilReadMasters (DMA_INDEX_C);
-   axilReadSlaves(DMA_INDEX_C)  <= dmaCtrlReadSlave;
 
    -------------------------------
    -- Map the AXI-Lite to PCIe PHY

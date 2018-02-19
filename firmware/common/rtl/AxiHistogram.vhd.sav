@@ -1,0 +1,286 @@
+-------------------------------------------------------------------------------
+-- File       : AxiHistogram.vhd
+-- Company    : SLAC National Accelerator Laboratory
+-- Created    : 2017-03-06
+-- Last update: 2018-01-31
+-------------------------------------------------------------------------------
+-- This file is part of 'axi-pcie-core'.
+-- It is subject to the license terms in the LICENSE.txt file found in the 
+-- top-level directory of this distribution and at: 
+--    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html. 
+-- No part of 'axi-pcie-core', including this file, 
+-- may be copied, modified, propagated, or distributed except according to 
+-- the terms contained in the LICENSE.txt file.
+-------------------------------------------------------------------------------
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_arith.all;
+use ieee.std_logic_unsigned.all;
+
+use work.StdRtlPkg.all;
+use work.AxiLitePkg.all;
+use work.AxiStreamPkg.all;
+
+entity AxiHistogram is
+  generic ( ADDR_WIDTH_G : integer := 10 );
+  port    ( -- Clock and reset
+    clk                 : in  sl;
+    rst                 : in  sl;
+    wen                 : in  sl;
+    addr                : in  slv(ADDR_WIDTH_G-1 downto 0);
+    push                : in  sl;
+    --
+    axiClk              : in  sl;
+    axiRst              : in  sl;
+    axiMaster           : out AxiWriteMasterType;
+    axiSlave            : in  AxiWriteSlaveType );
+end AxiHistogram;
+
+architecture mapping of AxiHistogram is
+
+  type RegType is record
+    iram           : sl;
+    addrb          : slv(ADDR_WIDTH_G-1 downto 0);
+    master         : AxiWriteMasterType;
+  end record;
+
+  constant REG_INIT_C : RegType := (
+    iram           => '0',
+    addrb          => (others=>'0'),
+    master         => AXI_WRITE_MASTER_INIT_C );
+
+  signal r   : RegType := REG_INIT_C;
+  signal rin : RegType;
+
+  signal iwen  : slv(1 downto 0);
+  signal irst  : slv(1 downto 0);
+  signal dina  : Slv32Array(1 downto 0);
+  signal douta : Slv32Array(1 downto 0);
+  signal doutb : Slv32Array(1 downto 0);
+begin
+
+  U_GENRAM : for i in 0 to 1 loop
+    U_RAM : entity work.DualPortRam
+      generic map ( DATA_WIDTH_G => 32,
+                    ADDR_WIDTH_G => ADDR_WIDTH_G )
+      port map ( -- Accumulation Interface
+                 clka   => clk,
+                 ena    => '1',
+                 wea    => iwen (i),
+                 rsta   => irst (i),
+                 addra  => addr ,
+                 dina   => dina (i),
+                 douta  => douta(i),
+                 -- Readout Interface
+                 clkb   => axiClk,
+                 enb    => '1',
+                 rstb   => '0',
+                 addrb  => addrb,
+                 doutb  => doutb(i) );
+
+    dina(i) <= douta(i)+1;
+  end generate;
+
+  iwen(0) <= wen  when r.iram='0' else '0';
+  iwen(1) <= wen  when r.iram='1' else '0';
+  irst(0) <= push when r.iram='1' else '0';
+  irst(1) <= push when r.iram='0' else '0';
+  
+  comb : process ( r, rst, push ) is
+    variable v : RegType;
+  begin
+    v := r;
+
+    if push = '1' then
+      v.iram := not r.iram;
+    end if;
+
+    if rst = '1' then
+      v := REG_INIT_C;
+    end if;
+
+    rin <= v;
+  end process;
+
+  status.blocksFree <= r.blocksFree;
+  dscWriteMaster    <= r.remMaster;
+  intDscWriteMaster.command <= r  .locMaster.command;
+  intDscWriteMaster.status  <= rin.locMaster.status;
+
+  mPause <= '1' when (r.blocksFree < config.blocksPause) else '0';
+  
+  U_Pause : entity work.Synchronizer
+    port map ( clk     => sAxisClk,
+               rst     => sAxisRst,
+               dataIn  => mPause,
+               dataOut => sPause );
+
+  --
+  --  Insert a fifo to cross clock domains
+  --
+  U_AxisFifo : entity work.AxiStreamFifo
+    generic map ( FIFO_ADDR_WIDTH_G   => 4,
+                  SLAVE_AXI_CONFIG_G  => AXI_STREAM_CONFIG_G,
+                  MASTER_AXI_CONFIG_G => AXI_STREAM_CONFIG_G )
+    port map ( sAxisClk    => sAxisClk,
+               sAxisRst    => sAxisRst,
+               sAxisMaster => sAxisMaster,
+               sAxisSlave  => sAxisSlave,
+               sAxisCtrl   => open,
+               mAxisClk    => mAxiClk,
+               mAxisRst    => mAxiRst,
+               mAxisMaster => mAxisMaster,
+               mAxisSlave  => mAxisSlave );
+  
+  axiRstN                  <= not mAxiRst;
+
+  --
+  --  Translate AxiStream to Axi using fixed size starting block addresses
+  --
+  U_ADM : AppToMig
+    port map ( m_axi_s2mm_aclk            => mAxiClk,
+               m_axi_s2mm_aresetn         => axiRstN,
+               s2mm_err                   => open,
+               m_axis_s2mm_cmdsts_awclk   => mAxiClk,
+               m_axis_s2mm_cmdsts_aresetn => axiRstN,
+               s_axis_s2mm_cmd_tvalid     => intDscWriteMaster.command.tValid,
+               s_axis_s2mm_cmd_tready     => intDscWriteSlave .command.tReady,
+               s_axis_s2mm_cmd_tdata      => intDscwriteMaster.command.tData(71 DOWNTO 0),
+               m_axis_s2mm_sts_tvalid     => intDscWriteSlave .status.tValid,
+               m_axis_s2mm_sts_tready     => intDscWriteMaster.status.tReady,
+               m_axis_s2mm_sts_tdata      => intDscWriteSlave .status.tData(31 DOWNTO 0),
+               m_axis_s2mm_sts_tkeep      => intDscWriteSlave .status.tKeep(3 DOWNTO 0),
+               m_axis_s2mm_sts_tlast      => intDscWriteSlave .status.tLast,
+               m_axi_s2mm_awid            => mAxiWriteMaster.awid(3 downto 0),
+               m_axi_s2mm_awaddr          => mAxiWriteMaster.awaddr(31 downto 0),
+               m_axi_s2mm_awlen           => mAxiWriteMaster.awlen,
+               m_axi_s2mm_awsize          => mAxiWriteMaster.awsize,
+               m_axi_s2mm_awburst         => mAxiWriteMaster.awburst,
+               m_axi_s2mm_awprot          => mAxiWriteMaster.awprot,
+               m_axi_s2mm_awcache         => mAxiWriteMaster.awcache,
+--                 m_axi_s2mm_awuser          => mAxiWriteMaster.awuser,
+               m_axi_s2mm_awvalid         => mAxiWriteMaster.awvalid,
+               m_axi_s2mm_awready         => mAxiWriteSlave .awready,
+               m_axi_s2mm_wdata           => mAxiWriteMaster.wdata(63 downto 0),
+               m_axi_s2mm_wstrb           => mAxiWriteMaster.wstrb( 7 downto 0),
+               m_axi_s2mm_wlast           => mAxiWriteMaster.wlast,
+               m_axi_s2mm_wvalid          => mAxiWriteMaster.wvalid,
+               m_axi_s2mm_wready          => mAxiWriteSlave .wready,
+               m_axi_s2mm_bresp           => mAxiWriteSlave .bresp,
+               m_axi_s2mm_bvalid          => mAxiWriteSlave .bvalid,
+               m_axi_s2mm_bready          => mAxiWriteMaster.bready,
+               s_axis_s2mm_tdata          => mAxisMaster.tData(63 downto 0),
+               s_axis_s2mm_tkeep          => mAxisMaster.tKeep( 7 downto 0),
+               s_axis_s2mm_tlast          => mAxisMaster.tLast,
+               s_axis_s2mm_tvalid         => mAxisMaster.tValid,
+               s_axis_s2mm_tready         => mAxisSlave.tReady
+               );
+  
+  wrTransfer  <= intDscWriteSlave.status.tValid and intDscWriteMaster.status.tReady;
+  dinTransfer <= intDscWriteSlave.status.tData(30 downto 8);
+  
+  U_TransferFifo : entity work.SimpleDualPortRam
+    generic map ( DATA_WIDTH_G => 23,
+                  ADDR_WIDTH_G => 32-BLOCK_BASE_SIZE_G )
+    port map ( clka       => mAxiClk,
+               ena        => '1',
+               wea        => wrTransfer,
+               addra      => r.wrIndex,
+               dina       => dinTransfer,
+               clkb       => mAxiClk,
+               enb        => '1',
+               rstb       => mAxiRst,
+               addrb      => r.rdIndex,
+               doutb      => doutTransfer );
+
+  comb : process ( r, mAxiRst, 
+                   doutTransfer ,
+                   dscWriteSlave,
+                   intDscWriteSlave,
+                   config ) is
+    variable v       : RegType;
+    variable i       : integer;
+    variable wlen    : slv(22 downto 0);
+    variable waddr   : slv(31 downto 0);
+  begin
+    v := r;
+
+--    i := conv_integer(config.blockSize) + BLOCK_BASE_SIZE_G;
+    i := BLOCK_BASE_SIZE_G;
+    
+    --
+    --  Keep stuffing new block addresses into the Axi engine
+    --
+    if intDscWriteSlave.command.tReady = '1' then
+      v.locMaster.command.tValid := '0';
+    end if;
+
+    if v.locMaster.command.tValid = '0' then
+      waddr   := resize(r.wrIndex,32-i) & toSlv(0,i);
+      wlen    := (others=>'0');
+      wlen(i) := '1';
+      v.locMaster.command.tData(71 downto 0) := x"0" & toSlv(0,4) &
+                                                waddr &
+                                                "01" & toSlv(0,6) &
+                                                '1' & wlen;
+      v.locMaster.command.tValid := '1';
+      v.locMaster.command.tLast  := '1';
+    end if;
+
+    --  Must hold to one clock edge
+    if r.locMaster.status.tReady = '1' then
+      v.locMaster.status.tReady := '0';
+    end if;
+
+    if intDscWriteSlave.status.tValid = '1' then
+      v.locMaster.status.tReady := '1';
+      v.wrIndex                 := r.wrIndex + 1;
+      v.wrIndex                 := resize(v.wrIndex,32-i);
+    end if;
+    
+    if dscWriteSlave.command.tReady = '1' then
+      v.remMaster.command.tValid := '0';
+    end if;
+    
+    if (v.remMaster.command.tValid = '0' and
+        r.rdIndex /= r.wrIndex) then
+      waddr   := resize(r.rdIndex,32-i) & toSlv(0,i);
+      wlen    := doutTransfer;
+      v.remMaster.command.tData(71 downto 0) := x"0" & toSlv(0,4) &
+                                                waddr &
+                                                "01" & toSlv(0,6) &
+                                                '1' & wlen;
+      v.remMaster.command.tValid := '1';
+      v.remMaster.command.tLast  := '1';
+      v.rdIndex                  := r.rdIndex + 1;
+      v.rdIndex                  := resize(v.rdIndex,32-i);
+    end if;
+
+    v.remMaster.status.tReady := '0';
+    if dscWriteSlave.status.tValid = '1' then
+      v.remMaster.status.tReady := '1';
+    end if;
+
+    v.blocksFree := resize(r.rdIndex - r.wrIndex - 1, 32-i);
+    
+    if mAxiRst = '1' then
+      v := REG_INIT_C;
+    end if;
+    
+    rin <= v;
+
+  end process comb;
+
+  seq: process(mAxiClk) is
+  begin
+    if rising_edge(mAxiClk) then
+      r <= rin;
+    end if;
+  end process seq;
+  
+  
+end mapping;
+
+
+

@@ -24,6 +24,15 @@ use work.AxiStreamPkg.all;
 
 package AxiDescPkg is
 
+  constant DESC_STREAM_CONFIG_INIT_C : AxiStreamConfigType := (
+    TSTRB_EN_C    => true,
+    TDATA_BYTES_C => 10,
+    TDEST_BITS_C  => 0,
+    TID_BITS_C    => 0,
+    TKEEP_MODE_C  => TKEEP_NORMAL_C,
+    TUSER_BITS_C  => 0,
+    TUSER_MODE_C  => TUSER_NONE_C );
+    
    type AxiDescMasterType is record
       command : AxiStreamMasterType;
       status  : AxiStreamSlaveType;
@@ -31,7 +40,7 @@ package AxiDescPkg is
 
    -- Initialization constants
    constant AXI_DESC_MASTER_INIT_C : AxiDescMasterType := ( 
-      command => AXI_STREAM_MASTER_INIT_C,
+      command => axiStreamMasterInit(DESC_STREAM_CONFIG_INIT_C),
       status  => AXI_STREAM_SLAVE_INIT_C );
 
    -- Array
@@ -47,7 +56,10 @@ package AxiDescPkg is
       command => AXI_STREAM_SLAVE_INIT_C,
       status  => AXI_STREAM_MASTER_INIT_C );
 
-end package AxiDmaPkg;
+   -- Array
+   type AxiDescSlaveArray is array (natural range<>) of AxiDescSlaveType;
+   
+end package AxiDescPkg;
 
-package body AxiDmaPkg is
-end body;
+package body AxiDescPkg is
+end package body;

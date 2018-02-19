@@ -2,7 +2,7 @@
 -- File       : PgpLane.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-01-24
+-- Last update: 2018-02-10
 -------------------------------------------------------------------------------
 -- Description: 
 -------------------------------------------------------------------------------
@@ -51,7 +51,12 @@ entity PgpLane is
       dmaObSlave      : out AxiStreamSlaveType;
       dmaIbMaster     : out AxiStreamMasterType;
       dmaIbSlave      : in  AxiStreamSlaveType;
-      -- AXI-Lite Interface (axilClk domain)
+       -- OOB Signals (dmaClk domain)
+      txOpCodeEn      : in  sl;
+      txOpCode        : in  slv(7 downto 0);
+      rxOpCodeEn      : out sl;
+      rxOpCode        : out slv(7 downto 0);
+     -- AXI-Lite Interface (axilClk domain)
       axilClk         : in  sl;
       axilRst         : in  sl;
       axilReadMaster  : in  AxiLiteReadMasterType;
@@ -99,18 +104,22 @@ architecture mapping of PgpLane is
    signal pgpTxMasters : AxiStreamMasterArray(NUM_VC_G-1 downto 0);
    signal pgpTxSlaves  : AxiStreamSlaveArray(NUM_VC_G-1 downto 0);
 
-   signal pgpRxOut     : Pgp3RxOutType;
    signal rxMasters    : AxiStreamMasterArray(NUM_VC_G-1 downto 0);
    signal pgpRxMasters : AxiStreamMasterArray(NUM_VC_G-1 downto 0);
    signal pgpRxCtrl    : AxiStreamCtrlArray(NUM_VC_G-1 downto 0);
 
    signal pgpRxVcBlowoff : slv(15 downto 0);
 
-
+   signal pgpTxIn      : Pgp3TxInType  := PGP3_TX_IN_INIT_C;
+   signal pgpRxOut     : Pgp3RxOutType;
+   
 begin
 
    dmaClk <= pgpClk;
    dmaRst <= pgpRst;
+
+   rxOpCodeEn  <= pgpRxOut.opCodeEn;
+   rxOpCode    <= pgpRxOut.opCodeData(7 downto 0);
    
    ---------------------
    -- AXI-Lite Crossbar
@@ -304,5 +313,17 @@ begin
          sAxilWriteSlave  => axilWriteSlaves(TX_MON_INDEX_C),
          sAxilReadMaster  => axilReadMasters(TX_MON_INDEX_C),
          sAxilReadSlave   => axilReadSlaves(TX_MON_INDEX_C));
+
+   U_TxOpCode : entity work.SynchronizerFifo
+     generic map ( DATA_WIDTH_G => 8,
+                   ADDR_WIDTH_G => 2 )
+     port map ( rst    => pgpRst,
+                wr_clk => pgpClk,
+                wr_en  => txOpCodeEn,
+                din    => txOpCode,
+                rd_clk => pgpClk,
+                valid  => pgpTxIn.opCodeEn,
+                dout   => pgpTxIn.opCodeData(7 downto 0) );
+   pgpTxIn.opCodeNumber <= toSlv(1,3);
 
 end mapping;

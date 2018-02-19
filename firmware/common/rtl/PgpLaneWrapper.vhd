@@ -2,7 +2,7 @@
 -- File       : PgpLaneWrapper.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-01-24
+-- Last update: 2018-02-10
 -------------------------------------------------------------------------------
 -- Description: 
 -------------------------------------------------------------------------------
@@ -52,7 +52,12 @@ entity PgpLaneWrapper is
       dmaObSlaves     : out AxiStreamSlaveArray (3 downto 0);
       dmaIbMasters    : out AxiStreamMasterArray(3 downto 0);
       dmaIbSlaves     : in  AxiStreamSlaveArray (3 downto 0);
-      -- AXI-Lite Interface (axilClk domain)
+       -- OOB Signals
+      txOpCodeEn      : in  slv                 (3 downto 0) := (others=>'0');
+      txOpCode        : in  Slv8Array           (3 downto 0) := (others=>X"00");
+      rxOpCodeEn      : out slv                 (3 downto 0);
+      rxOpCode        : out Slv8Array           (3 downto 0);
+     -- AXI-Lite Interface (axilClk domain)
       axilClk         : in  sl;
       axilRst         : in  sl;
       axilReadMaster  : in  AxiLiteReadMasterType;
@@ -197,7 +202,12 @@ begin
             dmaObSlave      => obSlaves (i),
             dmaIbMaster     => ibMasters(i),
             dmaIbSlave      => ibSlaves (i),
-            -- AXI-Lite Interface (axilClk domain)
+             -- OOB Signals
+            txOpCodeEn      => txOpCodeEn(i),
+            txOpCode        => txOpCode  (i),
+            rxOpCodeEn      => rxOpCodeEn(i),
+            rxOpCode        => rxOpCode  (i),
+           -- AXI-Lite Interface (axilClk domain)
             axilClk         => axilClk,
             axilRst         => axilRst,
             axilReadMaster  => axilReadMasters(i),
