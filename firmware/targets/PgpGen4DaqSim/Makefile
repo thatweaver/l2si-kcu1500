@@ -6,6 +6,8 @@ export PRJ_VERSION = 0x00000000
 # Define target part
 export PRJ_PART = xcku115-flvb2104-2-e
 
+export BOARD_PART = xilinx.com:kcu1500:part0:1.1
+
 export REMOVE_UNUSED_CODE = 1
 
 # Define target output
