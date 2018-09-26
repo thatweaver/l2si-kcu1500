@@ -2,7 +2,7 @@
 -- File       : Mig0.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-08-03
--- Last update: 2018-02-15
+-- Last update: 2018-02-20
 -------------------------------------------------------------------------------
 -- Description: Wrapper for the MIG core
 -------------------------------------------------------------------------------
@@ -254,7 +254,7 @@ begin
          rstIn  => coreResetN,
          rstOut => coreAresetN);
 
-   U_Xbar : entity work.MigXbarWrapper
+   U_Xbar : entity work.MigXbarV2Wrapper
       generic map (
          TPD_G => TPD_G)
       port map (

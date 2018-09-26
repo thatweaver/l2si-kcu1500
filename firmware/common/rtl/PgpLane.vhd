@@ -2,7 +2,7 @@
 -- File       : PgpLane.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-02-10
+-- Last update: 2018-08-19
 -------------------------------------------------------------------------------
 -- Description: 
 -------------------------------------------------------------------------------
@@ -51,6 +51,8 @@ entity PgpLane is
       dmaObSlave      : out AxiStreamSlaveType;
       dmaIbMaster     : out AxiStreamMasterType;
       dmaIbSlave      : in  AxiStreamSlaveType;
+      dmaIbFull       : in  sl;
+      sAxisCtrl       : out AxiStreamCtrlType;
        -- OOB Signals (dmaClk domain)
       txOpCodeEn      : in  sl;
       txOpCode        : in  slv(7 downto 0);
@@ -109,17 +111,24 @@ architecture mapping of PgpLane is
    signal pgpRxCtrl    : AxiStreamCtrlArray(NUM_VC_G-1 downto 0);
 
    signal pgpRxVcBlowoff : slv(15 downto 0);
-
-   signal pgpTxIn      : Pgp3TxInType  := PGP3_TX_IN_INIT_C;
-   signal pgpRxOut     : Pgp3RxOutType;
+   signal pgpLaneId      : slv(31 downto 0);
+   signal remLinkId      : slv(31 downto 0);
    
+   signal pgpTxIn      : Pgp3TxInType  := PGP3_TX_IN_INIT_C;
+   signal pgpRxIn      : Pgp3RxInType  := PGP3_RX_IN_INIT_C;
+   signal pgpRxOut     : Pgp3RxOutType;
+
+   signal pgpRxIn_frameDrop  : sl;
+   signal pgpRxIn_frameTrunc : sl;
+
 begin
 
    dmaClk <= pgpClk;
    dmaRst <= pgpRst;
 
    rxOpCodeEn  <= pgpRxOut.opCodeEn;
-   rxOpCode    <= pgpRxOut.opCodeData(7 downto 0);
+   rxOpCode    <= pgpRxOut.opCodeData( 7 downto 0);
+   remLinkId   <= pgpRxOut.opCodeData(47 downto 16);
    
    ---------------------
    -- AXI-Lite Crossbar
@@ -152,7 +161,8 @@ begin
          NUM_VC_G          => NUM_VC_G,
          AXIL_CLK_FREQ_G   => (SYS_CLK_FREQ_C/2.0),
          AXIL_BASE_ADDR_G  => AXI_CONFIG_C(PGP_INDEX_C).baseAddr,
-         AXIL_ERROR_RESP_G => AXI_ERROR_RESP_G)
+         AXIL_ERROR_RESP_G => AXI_ERROR_RESP_G )
+--         DEBUG_G           => (LANE_G=0) )
       port map (
          -- Stable Clock and Reset
          stableClk       => axilClk,
@@ -171,10 +181,10 @@ begin
          pgpClk          => pgpClk,
          pgpClkRst       => pgpRst,
          -- Non VC Rx Signals
-         pgpRxIn         => PGP3_RX_IN_INIT_C,
+         pgpRxIn         => pgpRxIn,
          pgpRxOut        => pgpRxOut,
          -- Non VC Tx Signals
-         pgpTxIn         => PGP3_TX_IN_INIT_C,
+         pgpTxIn         => pgpTxIn,
          pgpTxOut        => pgpTxOut,
          -- Frame Transmit Interface
          pgpTxMasters    => pgpTxMasters,
@@ -241,6 +251,10 @@ begin
          dmaRst       => pgpRst,
          dmaIbMaster  => dmaIbMaster,
          dmaIbSlave   => dmaIbSlave,
+         dmaIbFull    => dmaIbFull,
+         frameDrop    => pgpRxIn_frameDrop,
+         frameTrunc   => pgpRxIn_frameTrunc,
+         sAxisCtrl    => sAxisCtrl,
          -- PGP RX Interface (pgpRxClk domain)
          pgpClk       => pgpClk,
          pgpRst       => pgpRst,
@@ -258,6 +272,13 @@ begin
          pgpClk          => pgpClk,
          pgpRst          => pgpRst,
          pgpRxVcBlowoff  => pgpRxVcBlowoff,
+         pgpRxLoopback   => pgpRxIn.loopback,
+         pgpRxReset      => pgpRxIn.resetRx,
+         pgpFrameDrop    => pgpRxIn_frameDrop,
+         pgpFrameTrunc   => pgpRxIn_frameTrunc,
+         pgpLaneId       => pgpLaneId,
+         remLinkDet      => pgpRxOut.opCodeEn,
+         remLinkId       => remLinkId,
          -- AXI-Lite Register Interface (axilClk domain)
          axilClk         => axilClk,
          axilRst         => axilRst,
@@ -314,16 +335,18 @@ begin
          sAxilReadMaster  => axilReadMasters(TX_MON_INDEX_C),
          sAxilReadSlave   => axilReadSlaves(TX_MON_INDEX_C));
 
-   U_TxOpCode : entity work.SynchronizerFifo
-     generic map ( DATA_WIDTH_G => 8,
-                   ADDR_WIDTH_G => 2 )
-     port map ( rst    => pgpRst,
-                wr_clk => pgpClk,
-                wr_en  => txOpCodeEn,
-                din    => txOpCode,
-                rd_clk => pgpClk,
-                valid  => pgpTxIn.opCodeEn,
-                dout   => pgpTxIn.opCodeData(7 downto 0) );
-   pgpTxIn.opCodeNumber <= toSlv(1,3);
+   --U_TxOpCode : entity work.SynchronizerFifo
+   --  generic map ( DATA_WIDTH_G => 8,
+   --                ADDR_WIDTH_G => 2 )
+   --  port map ( rst    => pgpRst,
+   --             wr_clk => pgpClk,
+   --             wr_en  => txOpCodeEn,
+   --             din    => txOpCode,
+   --             rd_clk => pgpClk,
+   --             valid  => pgpTxIn.opCodeEn,
+   --             dout   => pgpTxIn.opCodeData(7 downto 0) );
+   pgpTxIn.opCodeNumber <= toSlv(6,3);
+   pgpTxIn.opCodeEn     <= txOpCodeEn;
+   pgpTxIn.opCodeData   <= pgpLaneId & x"00" & txOpCode;
 
 end mapping;

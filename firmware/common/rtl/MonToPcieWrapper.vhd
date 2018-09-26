@@ -2,7 +2,7 @@
 -- File       : MonToPcieWrapper.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2018-02-15
+-- Last update: 2018-06-28
 -------------------------------------------------------------------------------
 -- Description: Wrapper for Xilinx Axi Data Mover
 -- Axi stream input (dscReadMasters.command) launches an AxiReadMaster to
@@ -77,16 +77,16 @@ architecture mapping of MonToPcieWrapper is
       m_axi_s2mm_awuser : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
       m_axi_s2mm_awvalid : OUT STD_LOGIC;
       m_axi_s2mm_awready : IN STD_LOGIC;
-      m_axi_s2mm_wdata : OUT STD_LOGIC_VECTOR(63 DOWNTO 0);
-      m_axi_s2mm_wstrb : OUT STD_LOGIC_VECTOR( 7 DOWNTO 0);
+      m_axi_s2mm_wdata : OUT STD_LOGIC_VECTOR(127 DOWNTO 0);
+      m_axi_s2mm_wstrb : OUT STD_LOGIC_VECTOR( 15 DOWNTO 0);
       m_axi_s2mm_wlast : OUT STD_LOGIC;
       m_axi_s2mm_wvalid : OUT STD_LOGIC;
       m_axi_s2mm_wready : IN STD_LOGIC;
       m_axi_s2mm_bresp : IN STD_LOGIC_VECTOR(1 DOWNTO 0);
       m_axi_s2mm_bvalid : IN STD_LOGIC;
       m_axi_s2mm_bready : OUT STD_LOGIC;
-      s_axis_s2mm_tdata : IN STD_LOGIC_VECTOR(31 DOWNTO 0);
-      s_axis_s2mm_tkeep : IN STD_LOGIC_VECTOR(3 DOWNTO 0);
+      s_axis_s2mm_tdata : IN STD_LOGIC_VECTOR(127 DOWNTO 0);
+      s_axis_s2mm_tkeep : IN STD_LOGIC_VECTOR( 15 DOWNTO 0);
       s_axis_s2mm_tlast : IN STD_LOGIC;
       s_axis_s2mm_tvalid : IN STD_LOGIC;
       s_axis_s2mm_tready : OUT STD_LOGIC
@@ -119,10 +119,31 @@ architecture mapping of MonToPcieWrapper is
   signal r   : RegType := REG_INIT_C;
   signal rin : RegType;
 
+  signal isAxisMaster     : AxiStreamMasterType;
+  signal isAxisSlave      : AxiStreamSlaveType;
   signal imAxiWriteMaster : AxiWriteMasterType := AXI_WRITE_MASTER_INIT_C;
   signal mAxisSlave  : AxiStreamSlaveType;
+  signal s2mm_err : sl;
 
-  constant DEBUG_C : boolean := true;
+  constant SAXIS_CONFIG_C : AxiStreamConfigType := (
+    TSTRB_EN_C   => false,
+    TDATA_BYTES_C => 4,
+    TDEST_BITS_C  => 0,
+    TID_BITS_C    => 0,
+    TKEEP_MODE_C  => TKEEP_NORMAL_C,
+    TUSER_BITS_C  => 0,
+    TUSER_MODE_C  => TUSER_NORMAL_C );
+  
+  constant MAXIS_CONFIG_C : AxiStreamConfigType := (
+    TSTRB_EN_C   => false,
+    TDATA_BYTES_C => 16,
+    TDEST_BITS_C  => 0,
+    TID_BITS_C    => 0,
+    TKEEP_MODE_C  => TKEEP_NORMAL_C,
+    TUSER_BITS_C  => 0,
+    TUSER_MODE_C  => TUSER_NORMAL_C );
+  
+  constant DEBUG_C : boolean := false;
   
   component ila_0
     port ( clk    : in sl;
@@ -134,9 +155,9 @@ begin
   GEN_DEBUG : if DEBUG_C generate
     U_ILA : ila_0
       port map ( clk                   => axiClk,
-                 probe0(0)             => sAxisMaster.tValid,
-                 probe0(1)             => sAxisMaster.tLast,
-                 probe0(33 downto 2)   => sAxisMaster.tData(31 downto 0),
+                 probe0(0)             => isAxisMaster.tValid,
+                 probe0(1)             => isAxisMaster.tLast,
+                 probe0(33 downto 2)   => isAxisMaster.tData(31 downto 0),
                  probe0(34)            => '0',
                  probe0(35)            => mAxisSlave.tReady,
                  probe0(36)            => imAxiWriteMaster.awvalid,
@@ -157,14 +178,24 @@ begin
                  probe0(179)             => intDscWriteSlave .status .tValid,
                  probe0(211 downto 180)  => intDscWriteSlave .status .tData(31 downto 0),
                  probe0(212)             => intDscWriteMaster.status .tReady,
-                 probe0(255 downto 213)  => (others=>'0') );
+                 probe0(213)             => s2mm_err,
+                 probe0(255 downto 214)  => (others=>'0') );
   end generate;
-  
-  sAxisSlave                <= mAxisSlave;
-  
-  intDscWriteMaster.command <= r  .locMaster.command;
-  intDscWriteMaster.status  <= rin.locMaster.status;
 
+  GEN_FIFO : entity work.AxiStreamFifo
+    generic map ( SLAVE_AXI_CONFIG_G  => SAXIS_CONFIG_C,
+                  MASTER_AXI_CONFIG_G => MAXIS_CONFIG_C )
+    port map ( sAxisClk    => axiClk,
+               sAxisRst    => axiRst,
+               sAxisMaster => sAxisMaster,
+               sAxisSlave  => sAxisSlave,
+               mAxisClk    => axiClk,
+               mAxisRst    => axiRst,
+               mAxisMaster => isAxisMaster,
+               mAxisSlave  => isAxisSlave );
+  
+  isAxisSlave                <= mAxisSlave;
+  
   axiRstN                   <= not axiRst;
   mAxiWriteMaster           <= imAxiWriteMaster;
 
@@ -178,7 +209,7 @@ begin
   U_ADM : MonToPcie
     port map ( m_axi_s2mm_aclk            => axiClk,
                m_axi_s2mm_aresetn         => axiRstN,
-               s2mm_err                   => open,
+               s2mm_err                   => s2mm_err,
                m_axis_s2mm_cmdsts_awclk   => axiClk,
                m_axis_s2mm_cmdsts_aresetn => axiRstN,
                s_axis_s2mm_cmd_tvalid     => intDscWriteMaster.command.tValid,
@@ -199,18 +230,18 @@ begin
 --                 m_axi_s2mm_awuser          => imAxiWriteMaster.awuser,
                m_axi_s2mm_awvalid         => imAxiWriteMaster.awvalid,
                m_axi_s2mm_awready         => mAxiWriteSlave .awready,
-               m_axi_s2mm_wdata           => imAxiWriteMaster.wdata(63 downto 0),
-               m_axi_s2mm_wstrb           => imAxiWriteMaster.wstrb( 7 downto 0),
+               m_axi_s2mm_wdata           => imAxiWriteMaster.wdata(127 downto 0),
+               m_axi_s2mm_wstrb           => imAxiWriteMaster.wstrb( 15 downto 0),
                m_axi_s2mm_wlast           => imAxiWriteMaster.wlast,
                m_axi_s2mm_wvalid          => imAxiWriteMaster.wvalid,
                m_axi_s2mm_wready          => mAxiWriteSlave .wready,
                m_axi_s2mm_bresp           => mAxiWriteSlave .bresp,
                m_axi_s2mm_bvalid          => mAxiWriteSlave .bvalid,
                m_axi_s2mm_bready          => imAxiWriteMaster.bready,
-               s_axis_s2mm_tdata          => sAxisMaster.tData(31 downto 0),
-               s_axis_s2mm_tkeep          => sAxisMaster.tKeep( 3 downto 0),
-               s_axis_s2mm_tlast          => sAxisMaster.tLast,
-               s_axis_s2mm_tvalid         => sAxisMaster.tValid,
+               s_axis_s2mm_tdata          => isAxisMaster.tData(127 downto 0),
+               s_axis_s2mm_tkeep          => isAxisMaster.tKeep( 15 downto 0),
+               s_axis_s2mm_tlast          => isAxisMaster.tLast,
+               s_axis_s2mm_tvalid         => isAxisMaster.tValid,
                s_axis_s2mm_tready         => mAxisSlave.tReady
                );
   
@@ -218,7 +249,7 @@ begin
   dinTransfer <= intDscWriteSlave.status.tData(30 downto 8);
   
   comb : process ( r, axiRst,
-                   sAxisMaster,
+                   isAxisMaster,
                    mAxisSlave,
                    intDscWriteSlave,
                    enable, mAxiAddr ) is
@@ -232,13 +263,13 @@ begin
     --  Detect new stream packets
     --
     if (enable = '1' and
-        sAxisMaster.tValid = '1' and
+        isAxisMaster.tValid = '1' and
         r.idle = '1') then
       v.idle    := '0';
       v.wrIndex := r.wrIndex + 1;
     end if;
 
-    if sAxisMaster.tLast = '1' and mAxisSlave.tReady = '1' then
+    if isAxisMaster.tLast = '1' and mAxisSlave.tReady = '1' then
       v.idle := '1';
     end if;
     
@@ -270,6 +301,8 @@ begin
       v.locMaster.status.tReady := '1';
     end if;
     
+    intDscWriteMaster.command <= r.locMaster.command;
+    intDscWriteMaster.status  <= v.locMaster.status;
     
     if axiRst = '1' then
       v := REG_INIT_C;

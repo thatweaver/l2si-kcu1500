@@ -2,7 +2,7 @@
 -- File       : HardwareSemi.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-02-15
+-- Last update: 2018-06-28
 -------------------------------------------------------------------------------
 -- Description: HardwareSemi File
 -------------------------------------------------------------------------------
@@ -54,6 +54,8 @@ entity HardwareSemi is
       dmaIbMasters    : out AxiStreamMasterArray(3 downto 0);
       dmaIbSlaves     : in  AxiStreamSlaveArray (3 downto 0);
       dmaIbAlmostFull : in  slv                 (3 downto 0);
+      dmaIbFull       : in  slv                 (3 downto 0);
+      axiCtrl         : in  AxiCtrlType := AXI_CTRL_UNUSED_C;
       ---------------------
       --  HardwareSemi Ports
       ---------------------    
@@ -69,7 +71,7 @@ end HardwareSemi;
 architecture mapping of HardwareSemi is
 
    constant NUM_LANES_C       : natural := 4;
-   constant NUM_AXI_MASTERS_C : natural := 1+NUM_LANES_C;
+   constant NUM_AXI_MASTERS_C : natural := 2;
 
    constant PGP_INDEX_C     : natural := 0;
    constant SIM_INDEX_C     : natural := 1;
@@ -92,10 +94,45 @@ architecture mapping of HardwareSemi is
 
    signal idmaClks         : slv                 (NUM_LANES_C-1 downto 0);
    signal idmaRsts         : slv                 (NUM_LANES_C-1 downto 0);
+
+   signal sAxisCtrl : AxiStreamCtrlArray(NUM_LANES_C-1 downto 0) := (others=>AXI_STREAM_CTRL_UNUSED_C);
+   
+   constant DEBUG_C : boolean := false;
+
+   component ila_0
+     port ( clk     : in sl;
+            probe0  : in slv(255 downto 0) );
+   end component;
+
+   signal sAxiCtrl : AxiCtrlType;
 begin
 
    dmaClks <= idmaClks;
-  
+   dmaRsts <= idmaRsts;
+
+  GEN_DEBUG : if DEBUG_C generate
+    U_SPAUSE : entity work.Synchronizer
+      port map ( clk      => idmaClks(0),
+                 dataIn   => axiCtrl .pause,
+                 dataOut  => sAxiCtrl.pause );
+    U_SOFLOW : entity work.Synchronizer
+      port map ( clk      => idmaClks(0),
+                 dataIn   => axiCtrl .overflow,
+                 dataOut  => sAxiCtrl.overflow );
+    U_ILA : ila_0
+      port map ( clk                  => idmaClks(0),
+                 probe0(           0) => sAxisCtrl(0).idle,
+                 probe0(           1) => sAxisCtrl(0).pause,
+                 probe0(           2) => sAxisCtrl(0).overflow,
+                 probe0(           3) => dmaIbAlmostFull(0),
+                 probe0(           4) => txOpCodeEn(0),
+                 probe0(12 downto  5) => txOpCode(0),
+                 probe0(          13) => sAxiCtrl.pause,
+                 probe0(          14) => sAxiCtrl.overflow,
+                 probe0(          15) => dmaIbFull(0),
+                 probe0(255 downto 16) => (others=>'0') );
+  end generate;
+   
    ---------------------
    -- AXI-Lite Crossbar
    ---------------------
@@ -125,7 +162,7 @@ begin
       generic map (
          TPD_G            => TPD_G,
          REFCLK_WIDTH_G   => 1,
-         NUM_VC_G         => 4,        
+         NUM_VC_G         => 1,        
          AXI_ERROR_RESP_G => AXI_ERROR_RESP_G,
          AXI_BASE_ADDR_G  => AXI_BASE_ADDR_G)
       port map (
@@ -143,6 +180,12 @@ begin
          dmaObSlaves     => intObSlaves ,
          dmaIbMasters    => dmaIbMasters,
          dmaIbSlaves     => dmaIbSlaves ,
+         dmaIbFull       => dmaIbFull   ,
+         -- OOB Signals
+         txOpCodeEn      => txOpCodeEn,
+         txOpCode        => txOpCode,
+         rxOpCodeEn      => rxOpCodeEn,
+         rxOpCode        => rxOpCode,
          -- AXI-Lite Interface (axilClk domain)
          axilClk         => axilClk,
          axilRst         => axilRst,
@@ -155,7 +198,8 @@ begin
      U_TxOpCode : entity work.AppTxOpCode
        port map ( clk          => idmaClks       (i),
                   rst          => idmaRsts       (i),
-                  rxFull       => dmaIbAlmostFull(i),
+--                  rxFull       => dmaIbAlmostFull(i),
+                  rxFull       => sAxisCtrl(i).pause,
                   txFull       => dmaObAlmostFull(i),
                   txOpCodeEn   => txOpCodeEn     (i),
                   txOpCode     => txOpCode       (i) );

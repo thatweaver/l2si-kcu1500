@@ -2,7 +2,7 @@
 -- File       : AxiPciePkg.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2017-11-27
+-- Last update: 2018-03-10
 -------------------------------------------------------------------------------
 -- Description: Package file for AXI PCIe Core
 -------------------------------------------------------------------------------
@@ -35,14 +35,14 @@ package AxiPciePkg is
    -- System Clock Frequency
    constant SYS_CLK_FREQ_C : real := 250.0E+6;  -- units of Hz
 
-   -- DMA AXI Stream Configuration
+   -- DMA AXI Stream Configuration = PGP3_AXIS_CONFIG_C
    constant DMA_AXIS_CONFIG_C : AxiStreamConfigType := (
       TSTRB_EN_C    => false,
-      TDATA_BYTES_C => 16,
-      TDEST_BITS_C  => 8,
+      TDATA_BYTES_C => 8,
+      TDEST_BITS_C  => 4,
       TID_BITS_C    => 0,
       TKEEP_MODE_C  => TKEEP_COMP_C,
-      TUSER_BITS_C  => 4,
+      TUSER_BITS_C  => 2,
       TUSER_MODE_C  => TUSER_FIRST_LAST_C);
 
    -- DMA AXI Configuration   

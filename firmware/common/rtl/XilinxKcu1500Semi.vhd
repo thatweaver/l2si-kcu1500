@@ -2,7 +2,7 @@
 -- File       : XilinxKcu1500Semi.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-04-06
--- Last update: 2018-02-06
+-- Last update: 2018-08-18
 -------------------------------------------------------------------------------
 -- Description: AXI PCIe Core for KCU1500 board 
 --
@@ -38,6 +38,7 @@ entity XilinxKcu1500Semi is
       TPD_G            : time                  := 1 ns;
       MASTER_G         : boolean               := true;
       BUILD_INFO_G     : BuildInfoType;
+      EN_DEVICE_DNA_G  : boolean               := false;
       DRIVER_TYPE_ID_G : slv(31 downto 0)      := x"00000000" );
    port (
       ------------------------      
@@ -53,8 +54,8 @@ entity XilinxKcu1500Semi is
       -- DMA Ib Interfaces
       dmaIbClk        : in    sl; -- 200MHz
       dmaIbRst        : in    sl;
-      dmaIbMasters    : in    AxiWriteMasterArray (5 downto 0);
-      dmaIbSlaves     : out   AxiWriteSlaveArray  (5 downto 0);
+      dmaIbMasters    : in    AxiWriteMasterArray (4 downto 0);
+      dmaIbSlaves     : out   AxiWriteSlaveArray  (4 downto 0);
       -- Application AXI-Lite Interfaces [0x00800000:0x00FFFFFF] (appClk domain)
       appClk          : in    sl; -- 125MHz
       appRst          : in    sl;
@@ -151,6 +152,7 @@ begin
          MASTER_G         => MASTER_G,
          BUILD_INFO_G     => BUILD_INFO_G,
          XIL_DEVICE_G     => "ULTRASCALE",
+         EN_DEVICE_DNA_G  => EN_DEVICE_DNA_G,
          BOOT_PROM_G      => "SPI",
          DRIVER_TYPE_ID_G => DRIVER_TYPE_ID_G,
          AXI_ERROR_RESP_G => AXI_ERROR_RESP_C )
@@ -286,7 +288,7 @@ begin
    bootMiso(0) <= di(1);
    sck         <= uOr(bootSck);
 
-   U_PcieXbar : entity work.PcieXbarWrapper
+   U_PcieXbar : entity work.PcieXbarV2Wrapper
      port map ( sAxiClk                      => dmaIbClk,
                 sAxiRst                      => dmaIbRst,
                 sAxiWriteMasters             => dmaIbMasters,

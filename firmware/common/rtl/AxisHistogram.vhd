@@ -2,7 +2,7 @@
 -- File       : AxisHistogram.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2018-02-14
+-- Last update: 2018-02-23
 -------------------------------------------------------------------------------
 -- This file is part of 'axi-pcie-core'.
 -- It is subject to the license terms in the LICENSE.txt file found in the 
@@ -23,7 +23,8 @@ use work.AxiStreamPkg.all;
 
 entity AxisHistogram is
   generic ( ADDR_WIDTH_G : integer := 10;
-            INLET_G      : boolean := false );
+            INLET_G      : boolean := false;
+            ROLLOVER_EN_G : boolean := true );
   port    ( -- Clock and reset
     clk                 : in  sl;
     rst                 : in  sl;
@@ -71,14 +72,12 @@ architecture mapping of AxisHistogram is
   signal dina  : slv(31 downto 0);
   signal douta : slv(31 downto 0);
   signal doutb : slv(31 downto 0);
+  signal addrb : slv(ADDR_WIDTH_G-1 downto 0);
 
   constant END_ADDR : slv(ADDR_WIDTH_G-1 downto 0) := (others=>'1');
   
 begin
 
-  sAxisSlave  <= rin.axisSlave;
-  mAxisMaster <= r  .axisMaster;
-  
   U_RAM : entity work.DualPortRam
     generic map ( DATA_WIDTH_G => 32,
                   ADDR_WIDTH_G => ADDR_WIDTH_G )
@@ -94,14 +93,14 @@ begin
       clkb   => axisClk,
       enb    => '1',
       rstb   => '0',
-      addrb  => rin.addrb,
+      addrb  => addrb,
       doutb  => doutb );
 
   pout : process ( clk ) is
     constant OFLOW : slv(31 downto 0) := (others=>'1');
   begin
     if rising_edge(clk) then
-      if douta = OFLOW then
+      if ROLLOVER_EN_G = false and douta = OFLOW then
         dina <= douta;
       else
         dina <= douta+1;
@@ -157,6 +156,10 @@ begin
       end case;
     end if;
 
+    addrb       <= v.addrb;
+    sAxisSlave  <= v.axisSlave;
+    mAxisMaster <= r.axisMaster;
+  
     if axisRst = '1' then
       v := REG_INIT_C;
     end if;

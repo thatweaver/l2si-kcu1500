@@ -2,7 +2,7 @@
 -- File       : AppTxOpCode.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-02-10
+-- Last update: 2018-03-07
 -------------------------------------------------------------------------------
 -- Description: Application File
 -------------------------------------------------------------------------------
@@ -88,6 +88,8 @@ begin
          v.opCode   := BOTH_AF_OPCODE;
        end if;
      end if;
+
+     rin <= v;
   end process comb;
   
   process (clk) is

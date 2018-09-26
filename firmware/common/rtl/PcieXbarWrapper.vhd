@@ -2,7 +2,7 @@
 -- File       : PcieXbarWrapper.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2016-02-14
--- Last update: 2018-02-18
+-- Last update: 2018-02-20
 -------------------------------------------------------------------------------
 -- Description: AXI DMA Crossbar
 -------------------------------------------------------------------------------
@@ -324,7 +324,8 @@ architecture mapping of PcieXbarWrapper is
   signal mAxiRstL : sl;
 
   signal sAxiReadMasters  : AxiReadMasterArray (5 downto 0) := (others=>AXI_READ_MASTER_INIT_C);
-  signal sAxiReadSlaves   : AxiReadSlaveArray  (5 downto 0);
+  signal sAxiReadSlaves   : AxiReadSlaveArray  (5 downto 0) := (others=>AXI_READ_SLAVE_INIT_C);
+  signal isAxiWriteSlaves : AxiWriteSlaveArray  (5 downto 0) := (others=>AXI_WRITE_SLAVE_INIT_C);
   signal imAxiWriteMaster : AxiWriteMasterType := AXI_WRITE_MASTER_INIT_C;
   signal imAxiReadMaster  : AxiReadMasterType  := AXI_READ_MASTER_INIT_C;
 
@@ -338,8 +339,9 @@ begin
   mAxiRstL        <= not(mAxiRst);
   mAxiWriteMaster <= imAxiWriteMaster;
   mAxiReadMaster  <= imAxiReadMaster;
-
-   U_ILA : ila_0
+  sAxiWriteSlaves <= isAxiWriteSlaves;
+  
+   U_ILA_MAXI : ila_0
      port map ( clk         => mAxiClk,
                 probe0             (0) => mAxiRst,
                 probe0             (1) => imAxiWriteMaster.awvalid,
@@ -356,6 +358,47 @@ begin
                 probe0            (59) => imAxiWriteMaster.bready,
                 probe0( 91 downto  60) => imAxiWriteMaster.wstrb(31 downto 0),
                 probe0(255 downto  92) => (others=>'0') );
+
+   U_ILA_SAXI : ila_0
+     port map ( clk         => sAxiClk,
+                probe0             (0) => sAxiRst,
+                probe0             (1) => sAxiWriteMasters(0).awvalid,
+                probe0             (2) => sAxiWriteMasters(1).awvalid,
+                probe0             (3) => sAxiWriteMasters(2).awvalid,
+                probe0             (4) => sAxiWriteMasters(3).awvalid,
+                probe0             (5) => sAxiWriteMasters(4).awvalid,
+                probe0             (6) => sAxiWriteMasters(5).awvalid,
+                probe0             (7) => sAxiWriteMasters(0).wvalid,
+                probe0             (8) => sAxiWriteMasters(1).wvalid,
+                probe0             (9) => sAxiWriteMasters(2).wvalid,
+                probe0            (10) => sAxiWriteMasters(3).wvalid,
+                probe0            (11) => sAxiWriteMasters(4).wvalid,
+                probe0            (12) => sAxiWriteMasters(5).wvalid,
+                probe0            (13) => isAxiWriteSlaves(0).awready,
+                probe0            (14) => isAxiWriteSlaves(1).awready,
+                probe0            (15) => isAxiWriteSlaves(2).awready,
+                probe0            (16) => isAxiWriteSlaves(3).awready,
+                probe0            (17) => isAxiWriteSlaves(4).awready,
+                probe0            (18) => isAxiWriteSlaves(5).awready,
+                probe0            (19) => isAxiWriteSlaves(0).wready,
+                probe0            (20) => isAxiWriteSlaves(1).wready,
+                probe0            (21) => isAxiWriteSlaves(2).wready,
+                probe0            (22) => isAxiWriteSlaves(3).wready,
+                probe0            (23) => isAxiWriteSlaves(4).wready,
+                probe0            (24) => isAxiWriteSlaves(5).wready,
+                probe0            (25) => isAxiWriteSlaves(0).bvalid,
+                probe0            (26) => isAxiWriteSlaves(1).bvalid,
+                probe0            (27) => isAxiWriteSlaves(2).bvalid,
+                probe0            (28) => isAxiWriteSlaves(3).bvalid,
+                probe0            (29) => isAxiWriteSlaves(4).bvalid,
+                probe0            (30) => isAxiWriteSlaves(5).bvalid,
+                probe0            (31) => sAxiWriteMasters(0).bready,
+                probe0            (32) => sAxiWriteMasters(1).bready,
+                probe0            (33) => sAxiWriteMasters(2).bready,
+                probe0            (34) => sAxiWriteMasters(3).bready,
+                probe0            (35) => sAxiWriteMasters(4).bready,
+                probe0            (36) => sAxiWriteMasters(5).bready,
+                probe0(255 downto  37) => (others=>'0') );
 
    -------------------
    -- AXI PCIe IP Core
@@ -377,15 +420,15 @@ begin
          S00_AXI_AWPROT       => sAxiWriteMasters(0).awprot,
          S00_AXI_AWQOS        => sAxiWriteMasters(0).awqos,
          S00_AXI_AWVALID      => sAxiWriteMasters(0).awvalid,
-         S00_AXI_AWREADY      => sAxiWriteSlaves(0).awready,
+         S00_AXI_AWREADY      => isAxiWriteSlaves(0).awready,
          S00_AXI_WDATA        => sAxiWriteMasters(0).wdata(63 downto 0),
          S00_AXI_WSTRB        => sAxiWriteMasters(0).wstrb( 7 downto 0),
          S00_AXI_WLAST        => sAxiWriteMasters(0).wlast,
          S00_AXI_WVALID       => sAxiWriteMasters(0).wvalid,
-         S00_AXI_WREADY       => sAxiWriteSlaves(0).wready,
-         S00_AXI_BID          => sAxiWriteSlaves(0).bid(0 downto 0),
-         S00_AXI_BRESP        => sAxiWriteSlaves(0).bresp,
-         S00_AXI_BVALID       => sAxiWriteSlaves(0).bvalid,
+         S00_AXI_WREADY       => isAxiWriteSlaves(0).wready,
+         S00_AXI_BID          => isAxiWriteSlaves(0).bid(0 downto 0),
+         S00_AXI_BRESP        => isAxiWriteSlaves(0).bresp,
+         S00_AXI_BVALID       => isAxiWriteSlaves(0).bvalid,
          S00_AXI_BREADY       => sAxiWriteMasters(0).bready,
          S00_AXI_ARID(0)      => '0',
          S00_AXI_ARADDR       => sAxiReadMasters(0).araddr(37 downto 0),
@@ -417,15 +460,15 @@ begin
          S01_AXI_AWPROT       => sAxiWriteMasters(1).awprot,
          S01_AXI_AWQOS        => sAxiWriteMasters(1).awqos,
          S01_AXI_AWVALID      => sAxiWriteMasters(1).awvalid,
-         S01_AXI_AWREADY      => sAxiWriteSlaves(1).awready,
+         S01_AXI_AWREADY      => isAxiWriteSlaves(1).awready,
          S01_AXI_WDATA        => sAxiWriteMasters(1).wdata(63 downto 0),
          S01_AXI_WSTRB        => sAxiWriteMasters(1).wstrb( 7 downto 0),
          S01_AXI_WLAST        => sAxiWriteMasters(1).wlast,
          S01_AXI_WVALID       => sAxiWriteMasters(1).wvalid,
-         S01_AXI_WREADY       => sAxiWriteSlaves(1).wready,
-         S01_AXI_BID          => sAxiWriteSlaves(1).bid(0 downto 0),
-         S01_AXI_BRESP        => sAxiWriteSlaves(1).bresp,
-         S01_AXI_BVALID       => sAxiWriteSlaves(1).bvalid,
+         S01_AXI_WREADY       => isAxiWriteSlaves(1).wready,
+         S01_AXI_BID          => isAxiWriteSlaves(1).bid(0 downto 0),
+         S01_AXI_BRESP        => isAxiWriteSlaves(1).bresp,
+         S01_AXI_BVALID       => isAxiWriteSlaves(1).bvalid,
          S01_AXI_BREADY       => sAxiWriteMasters(1).bready,
          S01_AXI_ARID(0)      => '0',
          S01_AXI_ARADDR       => sAxiReadMasters(1).araddr(37 downto 0),
@@ -457,15 +500,15 @@ begin
          S02_AXI_AWPROT       => sAxiWriteMasters(2).awprot,
          S02_AXI_AWQOS        => sAxiWriteMasters(2).awqos,
          S02_AXI_AWVALID      => sAxiWriteMasters(2).awvalid,
-         S02_AXI_AWREADY      => sAxiWriteSlaves(2).awready,
+         S02_AXI_AWREADY      => isAxiWriteSlaves(2).awready,
          S02_AXI_WDATA        => sAxiWriteMasters(2).wdata(63 downto 0),
          S02_AXI_WSTRB        => sAxiWriteMasters(2).wstrb( 7 downto 0),
          S02_AXI_WLAST        => sAxiWriteMasters(2).wlast,
          S02_AXI_WVALID       => sAxiWriteMasters(2).wvalid,
-         S02_AXI_WREADY       => sAxiWriteSlaves(2).wready,
-         S02_AXI_BID          => sAxiWriteSlaves(2).bid(0 downto 0),
-         S02_AXI_BRESP        => sAxiWriteSlaves(2).bresp,
-         S02_AXI_BVALID       => sAxiWriteSlaves(2).bvalid,
+         S02_AXI_WREADY       => isAxiWriteSlaves(2).wready,
+         S02_AXI_BID          => isAxiWriteSlaves(2).bid(0 downto 0),
+         S02_AXI_BRESP        => isAxiWriteSlaves(2).bresp,
+         S02_AXI_BVALID       => isAxiWriteSlaves(2).bvalid,
          S02_AXI_BREADY       => sAxiWriteMasters(2).bready,
          S02_AXI_ARID(0)      => '0',
          S02_AXI_ARADDR       => sAxiReadMasters(2).araddr(37 downto 0),
@@ -497,15 +540,15 @@ begin
          S03_AXI_AWPROT       => sAxiWriteMasters(3).awprot,
          S03_AXI_AWQOS        => sAxiWriteMasters(3).awqos,
          S03_AXI_AWVALID      => sAxiWriteMasters(3).awvalid,
-         S03_AXI_AWREADY      => sAxiWriteSlaves(3).awready,
+         S03_AXI_AWREADY      => isAxiWriteSlaves(3).awready,
          S03_AXI_WDATA        => sAxiWriteMasters(3).wdata(63 downto 0),
          S03_AXI_WSTRB        => sAxiWriteMasters(3).wstrb( 7 downto 0),
          S03_AXI_WLAST        => sAxiWriteMasters(3).wlast,
          S03_AXI_WVALID       => sAxiWriteMasters(3).wvalid,
-         S03_AXI_WREADY       => sAxiWriteSlaves(3).wready,
-         S03_AXI_BID          => sAxiWriteSlaves(3).bid(0 downto 0),
-         S03_AXI_BRESP        => sAxiWriteSlaves(3).bresp,
-         S03_AXI_BVALID       => sAxiWriteSlaves(3).bvalid,
+         S03_AXI_WREADY       => isAxiWriteSlaves(3).wready,
+         S03_AXI_BID          => isAxiWriteSlaves(3).bid(0 downto 0),
+         S03_AXI_BRESP        => isAxiWriteSlaves(3).bresp,
+         S03_AXI_BVALID       => isAxiWriteSlaves(3).bvalid,
          S03_AXI_BREADY       => sAxiWriteMasters(3).bready,
          S03_AXI_ARID(0)      => '0',
          S03_AXI_ARADDR       => sAxiReadMasters(3).araddr(37 downto 0),
@@ -537,15 +580,15 @@ begin
          S04_AXI_AWPROT       => sAxiWriteMasters(4).awprot,
          S04_AXI_AWQOS        => sAxiWriteMasters(4).awqos,
          S04_AXI_AWVALID      => sAxiWriteMasters(4).awvalid,
-         S04_AXI_AWREADY      => sAxiWriteSlaves(4).awready,
+         S04_AXI_AWREADY      => isAxiWriteSlaves(4).awready,
          S04_AXI_WDATA        => sAxiWriteMasters(4).wdata(63 downto 0),
          S04_AXI_WSTRB        => sAxiWriteMasters(4).wstrb( 7 downto 0),
          S04_AXI_WLAST        => sAxiWriteMasters(4).wlast,
          S04_AXI_WVALID       => sAxiWriteMasters(4).wvalid,
-         S04_AXI_WREADY       => sAxiWriteSlaves(4).wready,
-         S04_AXI_BID          => sAxiWriteSlaves(4).bid(0 downto 0),
-         S04_AXI_BRESP        => sAxiWriteSlaves(4).bresp,
-         S04_AXI_BVALID       => sAxiWriteSlaves(4).bvalid,
+         S04_AXI_WREADY       => isAxiWriteSlaves(4).wready,
+         S04_AXI_BID          => isAxiWriteSlaves(4).bid(0 downto 0),
+         S04_AXI_BRESP        => isAxiWriteSlaves(4).bresp,
+         S04_AXI_BVALID       => isAxiWriteSlaves(4).bvalid,
          S04_AXI_BREADY       => sAxiWriteMasters(4).bready,
          S04_AXI_ARID(0)      => '0',
          S04_AXI_ARADDR       => sAxiReadMasters(4).araddr(37 downto 0),
@@ -577,15 +620,15 @@ begin
          S05_AXI_AWPROT       => sAxiWriteMasters(5).awprot,
          S05_AXI_AWQOS        => sAxiWriteMasters(5).awqos,
          S05_AXI_AWVALID      => sAxiWriteMasters(5).awvalid,
-         S05_AXI_AWREADY      => sAxiWriteSlaves(5).awready,
+         S05_AXI_AWREADY      => isAxiWriteSlaves(5).awready,
          S05_AXI_WDATA        => sAxiWriteMasters(5).wdata(63 downto 0),
          S05_AXI_WSTRB        => sAxiWriteMasters(5).wstrb( 7 downto 0),
          S05_AXI_WLAST        => sAxiWriteMasters(5).wlast,
          S05_AXI_WVALID       => sAxiWriteMasters(5).wvalid,
-         S05_AXI_WREADY       => sAxiWriteSlaves(5).wready,
-         S05_AXI_BID          => sAxiWriteSlaves(5).bid(0 downto 0),
-         S05_AXI_BRESP        => sAxiWriteSlaves(5).bresp,
-         S05_AXI_BVALID       => sAxiWriteSlaves(5).bvalid,
+         S05_AXI_WREADY       => isAxiWriteSlaves(5).wready,
+         S05_AXI_BID          => isAxiWriteSlaves(5).bid(0 downto 0),
+         S05_AXI_BRESP        => isAxiWriteSlaves(5).bresp,
+         S05_AXI_BVALID       => isAxiWriteSlaves(5).bvalid,
          S05_AXI_BREADY       => sAxiWriteMasters(5).bready,
          S05_AXI_ARID(0)      => '0',
          S05_AXI_ARADDR       => sAxiReadMasters(5).araddr(37 downto 0),

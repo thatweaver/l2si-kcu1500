@@ -179,7 +179,12 @@
 #create_clock -period 3.333 -name ddrClkP0 [get_ports {ddrClkP[0]}]
 create_generated_clock -name ddrIntClk00 [get_pins U_MIG0/U_MIG/inst/u_ddr4_infrastructure/gen_mmcme3.u_mmcme_adv_inst/CLKOUT0]
 create_generated_clock -name ddrIntClk10 [get_pins U_MIG0/U_MIG/inst/u_ddr4_infrastructure/gen_mmcme3.u_mmcme_adv_inst/CLKOUT6]
-set_clock_groups -asynchronous -group [get_clocks -include_generated_clocks ddrClkP[0]] -group [get_clocks -include_generated_clocks pciRefClkP] -group [get_clocks -include_generated_clocks pciExtRefClkP]
+create_clock -period 10.0 -name pciRefClkP [get_ports {pciRefClkP}]
+create_clock -period 10.0 -name pciExtRefClkP [get_ports {pciExtRefClkP}]
+set_clock_groups -asynchronous \
+                 -group [get_clocks -include_generated_clocks ddrClkP[0]] \
+                 -group [get_clocks -include_generated_clocks pciRefClkP] \
+                 -group [get_clocks -include_generated_clocks pciExtRefClkP]
 
 # set_property HIGH_PRIORITY true [get_nets {U_MIG0/U_MIG/inst/u_ddr4_infrastructure/div_clk}]
 

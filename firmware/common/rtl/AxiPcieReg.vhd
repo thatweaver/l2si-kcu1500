@@ -2,7 +2,7 @@
 -- File       : AxiPcieReg.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2018-02-12
+-- Last update: 2018-07-26
 -------------------------------------------------------------------------------
 -- Description: AXI-Lite Crossbar and Register Access
 -------------------------------------------------------------------------------
@@ -82,13 +82,15 @@ architecture mapping of AxiPcieReg is
 
    constant VERSION_INDEX_C : natural := 0;
    constant PHY_INDEX_C     : natural := 1;
-   constant PROM_INDEX_C    : natural := 2;
-   constant APP_INDEX_C     : natural := ite(USE_SPI, 4, ite(USE_BPI, 3, 2));
+   constant XVC_INDEX_C     : natural := 2;
+   constant PROM_INDEX_C    : natural := 3;
+   constant APP_INDEX_C     : natural := ite(USE_SPI, 5, ite(USE_BPI, 4, 3));
 
    constant NUM_AXI_MASTERS_C : natural := APP_INDEX_C+1;
    
    constant VERSION_ADDR_C : slv(31 downto 0) := x"00000000";
    constant PHY_ADDR_C     : slv(31 downto 0) := x"00010000";
+   constant XVC_ADDR_C     : slv(31 downto 0) := x"00020000";
    constant BPI_ADDR_C     : slv(31 downto 0) := x"00030000";
    constant SPI0_ADDR_C    : slv(31 downto 0) := x"00040000";
    constant SPI1_ADDR_C    : slv(31 downto 0) := x"00050000";
@@ -105,6 +107,10 @@ architecture mapping of AxiPcieReg is
      ret(PHY_INDEX_C).baseAddr     := PHY_ADDR_C;
      ret(PHY_INDEX_C).addrBits     := 16;
      ret(PHY_INDEX_C).connectivity := x"FFFF";
+
+     ret(XVC_INDEX_C).baseAddr     := XVC_ADDR_C;
+     ret(XVC_INDEX_C).addrBits     := 16;
+     ret(XVC_INDEX_C).connectivity := x"FFFF";
 
      if (USE_BPI) then
        ret(PROM_INDEX_C).baseAddr     := BPI_ADDR_C;
@@ -135,6 +141,11 @@ architecture mapping of AxiPcieReg is
    signal axilWriteMaster : AxiLiteWriteMasterType;
    signal maskWriteMaster : AxiLiteWriteMasterType;
    signal axilWriteSlave  : AxiLiteWriteSlaveType;
+
+   signal axilASReadMaster  : AxiLiteReadMasterType;
+   signal axilASReadSlave   : AxiLiteReadSlaveType;
+   signal axilASWriteMaster : AxiLiteWriteMasterType;
+   signal axilASWriteSlave  : AxiLiteWriteSlaveType;
 
    signal axilReadMasters  : AxiLiteReadMasterArray (NUM_AXI_MASTERS_C-1 downto 0);
    signal axilReadSlaves   : AxiLiteReadSlaveArray  (NUM_AXI_MASTERS_C-1 downto 0);
@@ -202,20 +213,31 @@ begin
          axilWriteMaster => axilWriteMaster,
          axilWriteSlave  => axilWriteSlave);
 
+   U_AxiLiteAsync : entity work.AxiLiteAsync
+     port map ( sAxiClk         => axiClk,
+                sAxiClkRst      => axiRst,
+                sAxiReadMaster  => axilReadMaster,
+                sAxiReadSlave   => axilReadSlave,
+                sAxiWriteMaster => axilWriteMaster,
+                sAxiWriteSlave  => axilWriteSlave,
+                -- Master Port
+                mAxiClk         => appClk,
+                mAxiClkRst      => appRst,
+                mAxiReadMaster  => axilASReadMaster,
+                mAxiReadSlave   => axilASReadSlave,
+                mAxiWriteMaster => axilASWriteMaster,
+                mAxiWriteSlave  => axilASWriteSlave );
+
    ----------------------------------------
    -- Mask off upper address for 16 MB BAR0
    ----------------------------------------
-   maskWriteMaster.awaddr  <= x"00" & axilWriteMaster.awaddr(23 downto 0);
-   maskWriteMaster.awprot  <= axilWriteMaster.awprot;
-   maskWriteMaster.awvalid <= axilWriteMaster.awvalid;
-   maskWriteMaster.wdata   <= axilWriteMaster.wdata;
-   maskWriteMaster.wstrb   <= axilWriteMaster.wstrb;
-   maskWriteMaster.wvalid  <= axilWriteMaster.wvalid;
-   maskWriteMaster.bready  <= axilWriteMaster.bready;
-   maskReadMaster.araddr   <= x"00" & axilReadMaster.araddr(23 downto 0);
-   maskReadMaster.arprot   <= axilReadMaster.arprot;
-   maskReadMaster.arvalid  <= axilReadMaster.arvalid;
-   maskReadMaster.rready   <= axilReadMaster.rready;
+   process (axilASWriteMaster, axilASReadMaster) is
+   begin
+     maskWriteMaster        <= axilASWriteMaster;
+     maskWriteMaster.awaddr <= x"00" & axilASWriteMaster.awaddr(23 downto 0);
+     maskReadMaster         <= axilASReadMaster;
+     maskReadMaster.araddr  <= x"00" & axilASReadMaster.araddr(23 downto 0);
+   end process;
 
    --------------------
    -- AXI-Lite Crossbar
@@ -228,12 +250,12 @@ begin
          NUM_MASTER_SLOTS_G => NUM_AXI_MASTERS_C,
          MASTERS_CONFIG_G   => AXI_CROSSBAR_MASTERS_CONFIG_C)
       port map (
-         axiClk              => axiClk,
-         axiClkRst           => axiRst,
+         axiClk              => appClk,
+         axiClkRst           => appRst,
          sAxiWriteMasters(0) => maskWriteMaster,
-         sAxiWriteSlaves(0)  => axilWriteSlave,
+         sAxiWriteSlaves(0)  => axilASWriteSlave,
          sAxiReadMasters(0)  => maskReadMaster,
-         sAxiReadSlaves(0)   => axilReadSlave,
+         sAxiReadSlaves(0)   => axilASReadSlave,
          mAxiWriteMasters    => axilWriteMasters,
          mAxiWriteSlaves     => axilWriteSlaves,
          mAxiReadMasters     => axilReadMasters,
@@ -252,8 +274,8 @@ begin
          XIL_DEVICE_G     => XIL_DEVICE_G)
       port map (
          -- AXI-Lite Interface
-         axiClk         => axiClk,
-         axiRst         => axiRst,
+         axiClk         => appClk,
+         axiRst         => appRst,
          axiReadMaster  => axilReadMasters (VERSION_INDEX_C),
          axiReadSlave   => axilReadSlaves  (VERSION_INDEX_C),
          axiWriteMaster => axilWriteMasters(VERSION_INDEX_C),
@@ -262,6 +284,18 @@ begin
          userReset      => cardResetOut,
          -- Optional: user values
          userValues     => userValues);
+
+   --------------------------
+   -- Xilinx Virtual Cable Module
+   --------------------------   
+   U_XVC : entity work.JtagBridgeWrapper
+     port map (
+       axilClk         => appClk,
+       axilRst         => appRst,
+       axilReadMaster  => axilReadMasters (XVC_INDEX_C),
+       axilReadSlave   => axilReadSlaves  (XVC_INDEX_C),
+       axilWriteMaster => axilWriteMasters(XVC_INDEX_C),
+       axilWriteSlave  => axilWriteSlaves (XVC_INDEX_C) );
 
    -----------------------------         
    -- AXI-Lite Boot Flash Module
@@ -291,8 +325,8 @@ begin
          axiWriteMaster => axilWriteMasters(PROM_INDEX_C),
          axiWriteSlave  => axilWriteSlaves (PROM_INDEX_C),
          -- Clocks and Resets
-         axiClk         => axiClk,
-         axiRst         => axiRst);
+         axiClk         => appClk,
+         axiRst         => appRst);
 
      bpiAddr <= bpiAddress(28 downto 0);
 
@@ -340,8 +374,8 @@ begin
                axiWriteMaster => axilWriteMasters(PROM_INDEX_C+i),
                axiWriteSlave  => axilWriteSlaves (PROM_INDEX_C+i),
                -- Clocks and Resets
-               axiClk         => axiClk,
-               axiRst         => axiRst);
+               axiClk         => appClk,
+               axiRst         => appRst);
 
       end generate GEN_VEC;
 
@@ -369,28 +403,11 @@ begin
 
    ----------------------------------
    -- Map the AXI-Lite to Application
-   ----------------------------------   
-   U_AxiLiteAsync : entity work.AxiLiteAsync
-      generic map (
-         TPD_G            => TPD_G,
-         AXI_ERROR_RESP_G => AXI_ERROR_RESP_G,
-         COMMON_CLK_G     => false,
-         NUM_ADDR_BITS_G  => 24)
-      port map (
-         -- Slave Interface
-         sAxiClk         => axiClk,
-         sAxiClkRst      => axiRst,
-         sAxiReadMaster  => axilReadMasters (APP_INDEX_C),
-         sAxiReadSlave   => axilReadSlaves  (APP_INDEX_C),
-         sAxiWriteMaster => axilWriteMasters(APP_INDEX_C),
-         sAxiWriteSlave  => axilWriteSlaves (APP_INDEX_C),
-         -- Master Interface
-         mAxiClk         => appClk,
-         mAxiClkRst      => appReset,
-         mAxiReadMaster  => appReadMaster,
-         mAxiReadSlave   => appReadSlave,
-         mAxiWriteMaster => appWriteMaster,
-         mAxiWriteSlave  => appWriteSlave);
+   ----------------------------------
+   appWriteMaster               <= axilWriteMasters(APP_INDEX_C);
+   axilWriteSlaves(APP_INDEX_C) <= appWriteSlave;
+   appReadMaster                <= axilReadMasters (APP_INDEX_C);
+   axilReadSlaves (APP_INDEX_C) <= appReadSlave;
 
    appReset <= cardResetIn or appRst;
 

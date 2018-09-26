@@ -2,7 +2,7 @@
 -- File       : Mig1.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-08-03
--- Last update: 2018-02-15
+-- Last update: 2018-02-23
 -------------------------------------------------------------------------------
 -- Description: Wrapper for the MIG core
 -------------------------------------------------------------------------------
@@ -134,17 +134,76 @@ architecture mapping of Mig1 is
    signal coreAresetN : sl;
    signal sysRstL    : sl;
 
+   constant DEBUG_C : boolean := false;
+
+   component ila_0
+     port ( clk  : in sl;
+            probe0 : in slv(255 downto 0) );
+   end component;
+
+   signal iaxiReady : sl;
+   signal iaxiWriteSlaves : AxiWriteSlaveArray(1 downto 0);
+
 begin
 
-   sysRstL <= not(axiRst);
+   GEN_DEBUG : if DEBUG_C generate
+     U_ILA_SAXI : ila_0
+       port map ( clk            => axiClk,
+                  probe0(0)      => axiRst,
+                  probe0(1)      => iaxiReady,
+                  probe0(2)      => axiWriteMasters(0).awvalid,
+                  probe0(3)      => axiWriteMasters(1).awvalid,
+                  probe0(11 downto  4) => axiWriteMasters(0).awlen,
+                  probe0(19 downto 12) => axiWriteMasters(1).awlen,
+                  probe0(22 downto 20) => axiWriteMasters(0).awsize,
+                  probe0(25 downto 23) => axiWriteMasters(1).awsize,
+                  probe0(26)      => axiWriteMasters(0).wvalid,
+                  probe0(27)      => axiWriteMasters(1).wvalid,
+                  probe0(28)      => axiWriteMasters(0).wlast,
+                  probe0(29)      => axiWriteMasters(1).wlast,
+                  probe0(30)      => axiWriteMasters(0).bready,
+                  probe0(31)      => axiWriteMasters(1).bready,
+                  probe0(32)      => iaxiWriteSlaves(0).awready,
+                  probe0(33)      => iaxiWriteSlaves(1).awready,
+                  probe0(34)      => iaxiWriteSlaves(0).wready,
+                  probe0(35)      => iaxiWriteSlaves(1).wready,
+                  probe0(36)      => iaxiWriteSlaves(0).bvalid,
+                  probe0(37)      => iaxiWriteSlaves(1).bvalid,
+                  probe0(39 downto 38) => axiWriteMasters(0).awburst,
+                  probe0(41 downto 40) => axiWriteMasters(1).awburst,
+                  probe0(255 downto 42) => (others=>'0') );
 
+     U_ILA_DDR : ila_0
+       port map ( clk            => ddrClk,
+                  probe0(0)      => ddrRst,
+                  probe0(1)      => ddrCalDone,
+                  probe0(2)      => ddrWriteMaster.awvalid,
+                  probe0(10 downto  3) => ddrWriteMaster.awlen,
+                  probe0(13 downto 11) => ddrWriteMaster.awsize,
+                  probe0(14)      => ddrWriteMaster.wvalid,
+                  probe0(15)      => ddrWriteMaster.wlast,
+                  probe0(16)      => ddrWriteMaster.bready,
+                  probe0(17)      => ddrWriteSlave.awready,
+                  probe0(18)      => ddrWriteSlave.wready,
+                  probe0(19)      => ddrWriteSlave.bvalid,
+                  probe0(20)      => coreReset,
+                  probe0(21)      => coreAresetN,
+                  probe0(53 downto 22) => ddrWriteMaster.awaddr(31 downto 0),
+                  probe0(56 downto 54) => ddrWriteMaster.awid  ( 2 downto 0),
+                  probe0(255 downto 57) => (others=>'0') );
+   end generate;
+   
+   sysRstL  <= not(axiRst);
+   axiReady <= iaxiReady;
+   axiWriteSlaves <= iaxiWriteSlaves;
+   
    U_axiReady : entity work.Synchronizer
       generic map (
          TPD_G => TPD_G)
       port map (
          clk     => axiClk,
          dataIn  => ddrCalDone,
-         dataOut => axiReady);
+         dataOut => iaxiReady);
 
    U_MIG : XilinxKcu1500Mig1Core
       port map (
@@ -219,7 +278,7 @@ begin
          rstIn  => coreResetN,
          rstOut => coreAresetN );
 
-   U_Xbar : entity work.MigXbarWrapper
+   U_Xbar : entity work.MigXbarV2Wrapper
       generic map (
          TPD_G => TPD_G)
       port map (
@@ -227,7 +286,7 @@ begin
          sAxiClk          => axiClk,
          sAxiRst          => axiRst,
          sAxiWriteMasters => axiWriteMasters,
-         sAxiWriteSlaves  => axiWriteSlaves,
+         sAxiWriteSlaves  => iaxiWriteSlaves,
          sAxiReadMasters  => axiReadMasters,
          sAxiReadSlaves   => axiReadSlaves,
          -- Master Interface

@@ -2,7 +2,7 @@
 -- File       : MigXbar.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-08-02
--- Last update: 2018-02-08
+-- Last update: 2018-02-19
 -------------------------------------------------------------------------------
 -- Description: Wrapper for the "store-and-forward" AXI FIFO
 -------------------------------------------------------------------------------
@@ -251,13 +251,18 @@ architecture mapping of MigXbarWrapper is
    signal mAxiRstLSync : sl;
    signal imAxiWriteMaster : AxiWriteMasterType := AXI_WRITE_MASTER_INIT_C;
    signal imAxiReadMaster  : AxiReadMasterType  := AXI_READ_MASTER_INIT_C;
+   signal isAxiWriteSlaves : AxiWriteSlaveArray(1 downto 0) := (others=>AXI_WRITE_SLAVE_INIT_C);
+   signal isAxiReadSlaves  : AxiReadSlaveArray (1 downto 0) := (others=>AXI_READ_SLAVE_INIT_C);
+     
 begin
 
    axiClk          <= sAxiClk;
-   axiRstL         <= mAxiRstLSync and not sAxiRst;
+   axiRstL         <= not sAxiRst;
    mAxiRst         <= not mAxiRstL;
    mAxiWriteMaster <= imAxiWriteMaster;
    mAxiReadMaster  <= imAxiReadMaster;
+   sAxiWriteSlaves <= isAxiWriteSlaves;
+   sAxiReadSlaves  <= isAxiReadSlaves;
    
    U_Sync : entity work.Synchronizer
       generic map (
@@ -304,12 +309,12 @@ begin
          S00_AXI_ARPROT       => sAxiReadMasters(0).arprot,
          S00_AXI_ARQOS        => sAxiReadMasters(0).arqos,
          S00_AXI_ARVALID      => sAxiReadMasters(0).arvalid,
-         S00_AXI_ARREADY      => sAxiReadSlaves(0).arready,
-         S00_AXI_RID          => sAxiReadSlaves(0).rid(0 downto 0),
-         S00_AXI_RDATA        => sAxiReadSlaves(0).rdata(63 downto 0),
-         S00_AXI_RRESP        => sAxiReadSlaves(0).rresp,
-         S00_AXI_RLAST        => sAxiReadSlaves(0).rlast,
-         S00_AXI_RVALID       => sAxiReadSlaves(0).rvalid,
+         S00_AXI_ARREADY      => isAxiReadSlaves(0).arready,
+         S00_AXI_RID          => isAxiReadSlaves(0).rid(0 downto 0),
+         S00_AXI_RDATA        => isAxiReadSlaves(0).rdata(63 downto 0),
+         S00_AXI_RRESP        => isAxiReadSlaves(0).rresp,
+         S00_AXI_RLAST        => isAxiReadSlaves(0).rlast,
+         S00_AXI_RVALID       => isAxiReadSlaves(0).rvalid,
          S00_AXI_RREADY       => sAxiReadMasters(0).rready,
          -- SLAVE[1]
          S01_AXI_ARESET_OUT_N => open,
@@ -344,12 +349,12 @@ begin
          S01_AXI_ARPROT       => sAxiReadMasters(1).arprot,
          S01_AXI_ARQOS        => sAxiReadMasters(1).arqos,
          S01_AXI_ARVALID      => sAxiReadMasters(1).arvalid,
-         S01_AXI_ARREADY      => sAxiReadSlaves(1).arready,
-         S01_AXI_RID          => sAxiReadSlaves(1).rid(0 downto 0),
-         S01_AXI_RDATA        => sAxiReadSlaves(1).rdata(63 downto 0),
-         S01_AXI_RRESP        => sAxiReadSlaves(1).rresp,
-         S01_AXI_RLAST        => sAxiReadSlaves(1).rlast,
-         S01_AXI_RVALID       => sAxiReadSlaves(1).rvalid,
+         S01_AXI_ARREADY      => isAxiReadSlaves(1).arready,
+         S01_AXI_RID          => isAxiReadSlaves(1).rid(0 downto 0),
+         S01_AXI_RDATA        => isAxiReadSlaves(1).rdata(63 downto 0),
+         S01_AXI_RRESP        => isAxiReadSlaves(1).rresp,
+         S01_AXI_RLAST        => isAxiReadSlaves(1).rlast,
+         S01_AXI_RVALID       => isAxiReadSlaves(1).rvalid,
          S01_AXI_RREADY       => sAxiReadMasters(1).rready,
          -- SLAVE[2]
          S02_AXI_ARESET_OUT_N => open,
@@ -364,15 +369,15 @@ begin
          S02_AXI_AWPROT       => sAxiWriteMasters(0).awprot,
          S02_AXI_AWQOS        => sAxiWriteMasters(0).awqos,
          S02_AXI_AWVALID      => sAxiWriteMasters(0).awvalid,
-         S02_AXI_AWREADY      => sAxiWriteSlaves(0).awready,
+         S02_AXI_AWREADY      => isAxiWriteSlaves(0).awready,
          S02_AXI_WDATA        => sAxiWriteMasters(0).wdata(63 downto 0),
          S02_AXI_WSTRB        => sAxiWriteMasters(0).wstrb( 7 downto 0),
          S02_AXI_WLAST        => sAxiWriteMasters(0).wlast,
          S02_AXI_WVALID       => sAxiWriteMasters(0).wvalid,
-         S02_AXI_WREADY       => sAxiWriteSlaves(0).wready,
-         S02_AXI_BID          => sAxiWriteSlaves(0).bid(0 downto 0),
-         S02_AXI_BRESP        => sAxiWriteSlaves(0).bresp,
-         S02_AXI_BVALID       => sAxiWriteSlaves(0).bvalid,
+         S02_AXI_WREADY       => isAxiWriteSlaves(0).wready,
+         S02_AXI_BID          => isAxiWriteSlaves(0).bid(0 downto 0),
+         S02_AXI_BRESP        => isAxiWriteSlaves(0).bresp,
+         S02_AXI_BVALID       => isAxiWriteSlaves(0).bvalid,
          S02_AXI_BREADY       => sAxiWriteMasters(0).bready,
          S02_AXI_ARID(0)      => '0',
          S02_AXI_ARADDR       => (others=>'0'),
@@ -404,15 +409,15 @@ begin
          S03_AXI_AWPROT       => sAxiWriteMasters(1).awprot,
          S03_AXI_AWQOS        => sAxiWriteMasters(1).awqos,
          S03_AXI_AWVALID      => sAxiWriteMasters(1).awvalid,
-         S03_AXI_AWREADY      => sAxiWriteSlaves(1).awready,
+         S03_AXI_AWREADY      => isAxiWriteSlaves(1).awready,
          S03_AXI_WDATA        => sAxiWriteMasters(1).wdata(63 downto 0),
          S03_AXI_WSTRB        => sAxiWriteMasters(1).wstrb( 7 downto 0),
          S03_AXI_WLAST        => sAxiWriteMasters(1).wlast,
          S03_AXI_WVALID       => sAxiWriteMasters(1).wvalid,
-         S03_AXI_WREADY       => sAxiWriteSlaves(1).wready,
-         S03_AXI_BID          => sAxiWriteSlaves(1).bid(0 downto 0),
-         S03_AXI_BRESP        => sAxiWriteSlaves(1).bresp,
-         S03_AXI_BVALID       => sAxiWriteSlaves(1).bvalid,
+         S03_AXI_WREADY       => isAxiWriteSlaves(1).wready,
+         S03_AXI_BID          => isAxiWriteSlaves(1).bid(0 downto 0),
+         S03_AXI_BRESP        => isAxiWriteSlaves(1).bresp,
+         S03_AXI_BVALID       => isAxiWriteSlaves(1).bvalid,
          S03_AXI_BREADY       => sAxiWriteMasters(1).bready,
          S03_AXI_ARID(0)      => '0',
          S03_AXI_ARADDR       => (others=>'0'),

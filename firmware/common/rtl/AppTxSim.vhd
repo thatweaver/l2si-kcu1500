@@ -2,7 +2,7 @@
 -- File       : AppTxSim.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-02-11
+-- Last update: 2018-03-07
 -------------------------------------------------------------------------------
 -- Description: Application File
 -------------------------------------------------------------------------------
@@ -211,7 +211,8 @@ begin
 
       saxisSlaves(i).tReady <= '0';
 
-      if r(i).reqCnt < txReqMax(i) then
+      if (r(i).reqCnt < txReqMax(i) or
+          txEnable(i) = '0') then
         txFull(i) <= '0';
       else
         txFull(i) <= '1';

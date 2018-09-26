@@ -2,7 +2,7 @@
 -- File       : AxiWriteSlaveSim.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-03-06
--- Last update: 2018-01-29
+-- Last update: 2018-02-21
 -------------------------------------------------------------------------------
 -- Description: Wrapper for Xilinx Axi Data Mover
 -- Axi stream input (dscWriteMasters.command) launches an AxiWriteMaster to
@@ -38,17 +38,21 @@ end AxiWriteSlaveSim;
 
 architecture mapping of AxiWriteSlaveSim is
 
+  type StateType is ( IDLE_S, AWVALID_S, WLAST_S );
+  
   type RegType is record
+    state  : StateType;
     slave  : AxiWriteSlaveType;
     bvalid : sl;
   end record;
 
   constant REG_INIT_C : RegType := (
+    state  => IDLE_S,
     slave  => AXI_WRITE_SLAVE_INIT_C,
     bvalid => '0' );
 
-  signal r   : RegType;
-  signal rin : RegType := REG_INIT_C;
+  signal r   : RegType := REG_INIT_C;
+  signal rin : RegType;
   
 begin
 
@@ -62,24 +66,33 @@ begin
     v.slave.awready := '0';
     v.slave.wready  := '0';
 
-    if axiWriteMaster.awvalid = '1' then
-      v.slave.awready := '1';
+    if v.state = IDLE_S then
+      if axiWriteMaster.awvalid = '1' then
+        v.state         := AWVALID_S;
+        v.slave.awready := '1';
+        v.slave.bid     := axiWriteMaster.awid;
+      end if;
     end if;
-    
-    if axiWriteMaster.wvalid = '1' then
-      v.slave.wready := '1';
-      if axiWriteMaster.wlast = '1' then
-        v.bvalid := '1';
+
+    if v.state = AWVALID_S then
+      if axiWriteMaster.wvalid = '1' then
+        v.slave.wready := '1';
+        if axiWriteMaster.wlast = '1' then
+          v.state  := WLAST_S;
+          v.bvalid := '1';
+        end if;
+      end if;
+    end if;
+
+    if v.state = WLAST_S then
+      if r.bvalid = '1' and axiWriteMaster.bready = '1' then
+        v.state  := IDLE_S;
+        v.bvalid := '0';
       end if;
     end if;
 
     v.slave.bvalid := r.bvalid;
     
-    if r.slave.bvalid = '1' and axiWriteMaster.bready = '1' then
-      v.slave.bvalid := '0';
-      v.bvalid       := '0';
-    end if;
-
     if axiRst = '1' then
       v := REG_INIT_C;
     end if;

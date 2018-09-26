@@ -2,7 +2,7 @@
 -- File       : PgpLaneWrapper.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-26
--- Last update: 2018-02-10
+-- Last update: 2018-06-23
 -------------------------------------------------------------------------------
 -- Description: 
 -------------------------------------------------------------------------------
@@ -52,6 +52,8 @@ entity PgpLaneWrapper is
       dmaObSlaves     : out AxiStreamSlaveArray (3 downto 0);
       dmaIbMasters    : out AxiStreamMasterArray(3 downto 0);
       dmaIbSlaves     : in  AxiStreamSlaveArray (3 downto 0);
+      dmaIbFull       : in  slv                 (3 downto 0);
+      sAxisCtrl       : out AxiStreamCtrlArray  (3 downto 0);
        -- OOB Signals
       txOpCodeEn      : in  slv                 (3 downto 0) := (others=>'0');
       txOpCode        : in  Slv8Array           (3 downto 0) := (others=>X"00");
@@ -68,9 +70,9 @@ end PgpLaneWrapper;
 
 architecture mapping of PgpLaneWrapper is
 
-   constant NUM_AXI_MASTERS_C : natural := 8;
+   constant NUM_AXI_MASTERS_C : natural := 4;
 
-   constant AXI_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXI_MASTERS_C-1 downto 0) := genAxiLiteConfig(NUM_AXI_MASTERS_C, AXI_BASE_ADDR_G, 20, 16);
+   constant AXI_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXI_MASTERS_C-1 downto 0) := genAxiLiteConfig(NUM_AXI_MASTERS_C, AXI_BASE_ADDR_G, 18, 16);
 
    signal axilWriteMasters : AxiLiteWriteMasterArray(NUM_AXI_MASTERS_C-1 downto 0);
    signal axilWriteSlaves  : AxiLiteWriteSlaveArray (NUM_AXI_MASTERS_C-1 downto 0);
@@ -202,6 +204,8 @@ begin
             dmaObSlave      => obSlaves (i),
             dmaIbMaster     => ibMasters(i),
             dmaIbSlave      => ibSlaves (i),
+            dmaIbFull       => dmaIbFull(i),
+            sAxisCtrl       => sAxisCtrl(i),
              -- OOB Signals
             txOpCodeEn      => txOpCodeEn(i),
             txOpCode        => txOpCode  (i),
