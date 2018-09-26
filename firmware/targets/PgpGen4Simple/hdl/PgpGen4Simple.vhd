@@ -2,7 +2,7 @@
 -- File       : PgpGen4NoRam.vhd
 -- Company    : SLAC National Accelerator Laboratory
 -- Created    : 2017-10-24
--- Last update: 2018-02-16
+-- Last update: 2018-03-10
 -------------------------------------------------------------------------------
 -- Description: 
 -------------------------------------------------------------------------------
@@ -104,11 +104,14 @@ architecture top_level of PgpGen4Simple is
    signal sysRsts    : slv(1 downto 0);
    signal clk200     : slv(1 downto 0);
    signal rst200     : slv(1 downto 0);
+   signal irst200    : slv(1 downto 0);
+   signal urst200    : slv(1 downto 0);
+   signal userReset  : slv(1 downto 0);
    signal userClock  : sl;
    signal userClk156 : sl;
    signal userSwDip  : slv(3 downto 0);
    signal userLed    : slv(7 downto 0);
-
+   
    signal qsfpRstL     : slv(1 downto 0);
    signal qsfpLpMode   : slv(1 downto 0);
    signal qsfpModSelL  : slv(1 downto 0);
@@ -144,8 +147,8 @@ architecture top_level of PgpGen4Simple is
    signal dmaObMasters    : AxiStreamMasterArray(1 downto 0);
    signal dmaObSlaves     : AxiStreamSlaveArray (1 downto 0);
 
-   signal dmaIbMasters    : AxiWriteMasterArray (11 downto 0);
-   signal dmaIbSlaves     : AxiWriteSlaveArray  (11 downto 0);
+   signal dmaIbMasters    : AxiWriteMasterArray (9 downto 0);
+   signal dmaIbSlaves     : AxiWriteSlaveArray  (9 downto 0);
 
    signal hwClks          : slv                 (7 downto 0);
    signal hwRsts          : slv                 (7 downto 0);
@@ -154,6 +157,7 @@ architecture top_level of PgpGen4Simple is
    signal hwIbMasters     : AxiStreamMasterArray(7 downto 0);
    signal hwIbSlaves      : AxiStreamSlaveArray (7 downto 0);
    signal hwIbAlmostFull  : slv                 (7 downto 0);
+   signal hwIbFull        : slv                 (7 downto 0);
    
    signal memReady        : slv                (3 downto 0);
    signal memWriteMasters : AxiWriteMasterArray(7 downto 0);
@@ -169,15 +173,6 @@ architecture top_level of PgpGen4Simple is
    signal mAxilWriteMasters : AxiLiteWriteMasterArray(2*NUM_AXIL_MASTERS_C-1 downto 0);
    signal mAxilWriteSlaves  : AxiLiteWriteSlaveArray (2*NUM_AXIL_MASTERS_C-1 downto 0);
    constant AXIL_CROSSBAR_MASTERS_CONFIG_C : AxiLiteCrossbarMasterConfigArray(NUM_AXIL_MASTERS_C-1 downto 0) := genAxiLiteConfig( NUM_AXIL_MASTERS_C, x"00800000", 23, 22);
-
-   constant axiStreamConfig : AxiStreamConfigType := (
-     TSTRB_EN_C    => true,
-     TDATA_BYTES_C => 8,
-     TDEST_BITS_C  => 0,
-     TID_BITS_C    => 0,
-     TKEEP_MODE_C  => TKEEP_NORMAL_C,
-     TUSER_BITS_C  => 0,
-     TUSER_MODE_C  => TUSER_NONE_C );
 
    signal migConfig : MigConfigArray(7 downto 0) := (others=>MIG_CONFIG_INIT_C);
    signal migStatus : MigStatusArray(7 downto 0);
@@ -283,9 +278,21 @@ begin
   GEN_SEMI : for i in 0 to 0 generate
 
      clk200  (i) <= mmcmClkOut(i)(0);
-     rst200  (i) <= mmcmRstOut(i)(0);
      axilClks(i) <= mmcmClkOut(i)(1);
      axilRsts(i) <= mmcmRstOut(i)(1);
+
+     -- Forcing BUFG for reset that's used everywhere      
+     U_BUFG : BUFG
+       port map (
+         I => mmcmRstOut(i)(0),
+         O => rst200(i));
+
+     irst200(i) <= rst200(i) or userReset(i);
+     -- Forcing BUFG for reset that's used everywhere      
+     U_BUFGU : BUFG
+       port map (
+         I => irst200(i),
+         O => urst200(i));
      
      U_MMCM : entity work.ClockManagerUltraScale
        generic map ( INPUT_BUFG_G       => false,
@@ -318,9 +325,9 @@ begin
          --dmaObSlave      => dmaObSlaves    (i),
          --
          dmaIbClk        => clk200         (i),
-         dmaIbRst        => rst200         (i),
-         dmaIbMasters    => dmaIbMasters   (6*i+5 downto 6*i),
-         dmaIbSlaves     => dmaIbSlaves    (6*i+5 downto 6*i),
+         dmaIbRst        => urst200        (i),
+         dmaIbMasters    => dmaIbMasters   (5*i+4 downto 5*i),
+         dmaIbSlaves     => dmaIbSlaves    (5*i+4 downto 5*i),
          -- AXI-Lite Interface
          appClk          => axilClks        (i),
          appRst          => axilRsts        (i),
@@ -394,6 +401,7 @@ begin
          dmaIbMasters    => hwIbMasters   (4*i+3 downto 4*i),
          dmaIbSlaves     => hwIbSlaves    (4*i+3 downto 4*i),
          dmaIbAlmostFull => hwIbAlmostFull(4*i+3 downto 4*i),
+         dmaIbFull       => hwIbFull      (4*i+3 downto 4*i),
          ------------------
          --  Hardware Ports
          ------------------       
@@ -409,36 +417,37 @@ begin
 
      GEN_HWDMA : for j in 4*i+0 to 4*i+3 generate
        U_HwDma : entity work.AppToMigWrapper
-         generic map ( AXI_STREAM_CONFIG_G => axiStreamConfig,
-                       AXI_BASE_ADDR_G     => ite((i mod 2)=0,x"00000000",x"80000000"),
-                       DEBUG_G             => ite(j<3, false, true) )
+         generic map ( AXI_BASE_ADDR_G     => (toSlv(j,1) & toSlv(0,31)),
+                       DEBUG_G             => (j<1) )
          port map ( sAxisClk        => hwClks         (j),
                     sAxisRst        => hwRsts         (j),
                     sAxisMaster     => hwIbMasters    (j),
                     sAxisSlave      => hwIbSlaves     (j),
-                    sPause          => hwIbAlmostFull (j),
+                    sAlmostFull     => hwIbAlmostFull (j),
+                    sFull           => hwIbFull       (j),
                     mAxiClk         => clk200     (i),
-                    mAxiRst         => rst200     (i),
+                    mAxiRst         => urst200    (i),
                     mAxiWriteMaster => memWriteMasters(j),
                     mAxiWriteSlave  => memWriteSlaves (j),
-                    dscWriteMaster  => dscMasters     (j),
-                    dscWriteSlave   => dscSlaves      (j),
+                    dscReadMaster   => dscMasters     (j),
+                    dscReadSlave    => dscSlaves      (j),
                     memReady        => memReady       (j/2),
                     config          => migConfig      (j),
                     status          => migStatus      (j) );
      end generate;
 
      U_Mig2Pcie : entity work.MigToPcieWrapper
-       generic map ( NAPP_G           => 1,
+       generic map ( NAPP_G           => 4,
                      AXIL_BASE_ADDR_G => x"00800000" )
        port map ( axiClk         => clk200(i),
                   axiRst         => rst200(i),
+                  usrRst         => userReset(i),
                   axiReadMasters => memReadMasters(4*i+3 downto 4*i),
                   axiReadSlaves  => memReadSlaves (4*i+3 downto 4*i),
                   dscReadMasters => dscMasters    (4*i+3 downto 4*i),
                   dscReadSlaves  => dscSlaves     (4*i+3 downto 4*i),
-                  axiWriteMasters=> dmaIbMasters  (6*i+5 downto 6*i),
-                  axiWriteSlaves => dmaIbSlaves   (6*i+5 downto 6*i),
+                  axiWriteMasters=> dmaIbMasters  (5*i+4 downto 5*i),
+                  axiWriteSlaves => dmaIbSlaves   (5*i+4 downto 5*i),
                   axilClk        => axilClks        (i),
                   axilRst        => axilRsts        (i),
                   axilWriteMaster=> mAxilWriteMasters(i*NUM_AXIL_MASTERS_C+0),
@@ -454,7 +463,7 @@ begin
     port map ( axiReady        => memReady(0),
                --
                axiClk          => clk200         (0),
-               axiRst          => rst200         (0),
+               axiRst          => urst200        (0),
                axiWriteMasters => memWriteMasters(1 downto 0),
                axiWriteSlaves  => memWriteSlaves (1 downto 0),
                axiReadMasters  => memReadMasters (1 downto 0),
@@ -469,7 +478,7 @@ begin
     port map ( axiReady        => memReady(1),
                --
                axiClk          => clk200         (0),
-               axiRst          => rst200         (0),
+               axiRst          => urst200        (0),
                axiWriteMasters => memWriteMasters(3 downto 2),
                axiWriteSlaves  => memWriteSlaves (3 downto 2),
                axiReadMasters  => memReadMasters (3 downto 2),
