@@ -19,13 +19,13 @@ end PgpGen4DaqSim;
 architecture top_level_app of PgpGen4DaqSim is
 
   constant NAPP_C  : integer := 1;
-  constant LANES_C : integer := 1;
+  constant LANES_C : integer := 4;
   
   signal axiClk, axiRst : sl;
   signal axilWriteMaster     : AxiLiteWriteMasterType := AXI_LITE_WRITE_MASTER_INIT_C;
   signal axilWriteSlave      : AxiLiteWriteSlaveType;
   signal axilReadMaster      : AxiLiteReadMasterType := AXI_LITE_READ_MASTER_INIT_C;
-  signal axilReadSlave       : AxiLiteReadSlaveType;
+  signal axilReadSlave       : AxiLiteReadSlaveType := AXI_LITE_READ_SLAVE_INIT_C;
 
   signal axiReadMasters      : AxiReadMasterArray(LANES_C-1 downto 0) := (others=>AXI_READ_MASTER_INIT_C);
   signal axiReadSlaves       : AxiReadSlaveArray (LANES_C-1 downto 0) := (others=>AXI_READ_SLAVE_INIT_C);
@@ -33,8 +33,8 @@ architecture top_level_app of PgpGen4DaqSim is
   signal dscReadMasters      : AxiDescMasterArray(LANES_C-1 downto 0) := (others=>AXI_DESC_MASTER_INIT_C);
   signal dscReadSlaves       : AxiDescSlaveArray (LANES_C-1 downto 0) := (others=>AXI_DESC_SLAVE_INIT_C);
 
-  signal axiWriteMasters     : AxiWriteMasterArray(LANES_C+1 downto 0) := (others=>AXI_WRITE_MASTER_INIT_C);
-  signal axiWriteSlaves      : AxiWriteSlaveArray (LANES_C+1 downto 0) := (others=>AXI_WRITE_SLAVE_INIT_C);
+  signal axiWriteMasters     : AxiWriteMasterArray(LANES_C downto 0) := (others=>AXI_WRITE_MASTER_INIT_C);
+  signal axiWriteSlaves      : AxiWriteSlaveArray (LANES_C downto 0) := (others=>AXI_WRITE_SLAVE_INIT_C);
 
   constant sAxisConfig : AxiStreamConfigType := (
     TSTRB_EN_C    => true,
@@ -53,50 +53,65 @@ architecture top_level_app of PgpGen4DaqSim is
   
   signal axilDone : sl;
 
-  signal ssamp : sl;
-  signal spush : sl;
-  signal haddr : slv(9 downto 0) := (others=>'0');
-  signal haxisMaster : AxiStreamMasterArray(4 downto 0);
-  signal haxisSlave  : AxiStreamSlaveArray (4 downto 0);
-  signal haxiWriteMaster : AxiWriteMasterType;
-  signal haxiWriteSlave  : AxiWriteSlaveType;
-  signal haxiWriteData   : slv(63 downto 0);
-  
   constant config : MigConfigType := MIG_CONFIG_INIT_C;
   signal status   : MigStatusArray(LANES_C-1 downto 0);
 
-  signal memWriteMasters : AxiWriteMasterArray(1 downto 0) := (others=>AXI_WRITE_MASTER_INIT_C);
-  signal memReadMasters  : AxiReadMasterArray (1 downto 0) := (others=>AXI_READ_MASTER_INIT_C);
-  signal memWriteSlaves  : AxiWriteSlaveArray (1 downto 0) := (others=>AXI_WRITE_SLAVE_FORCE_C);
-  signal memReadSlaves   : AxiReadSlaveArray  (1 downto 0) := (others=>AXI_READ_SLAVE_FORCE_C);
+  signal memWriteMasters : AxiWriteMasterArray(LANES_C-1 downto 0) := (others=>AXI_WRITE_MASTER_INIT_C);
+  signal memReadMasters  : AxiReadMasterArray (LANES_C-1 downto 0) := (others=>AXI_READ_MASTER_INIT_C);
+  signal memWriteSlaves  : AxiWriteSlaveArray (LANES_C-1 downto 0) := (others=>AXI_WRITE_SLAVE_INIT_C);
+  signal memReadSlaves   : AxiReadSlaveArray  (LANES_C-1 downto 0) := (others=>AXI_READ_SLAVE_INIT_C);
 
-  signal memReady : slv          (0 downto 0);
-  signal ddrClkP  : slv          (0 downto 0);
-  signal ddrClkN  : slv          (0 downto 0);
-  signal ddrOut   : DdrOutArray  (0 downto 0);
-  signal ddrInOut : DdrInOutArray(0 downto 0);
+  signal ddrClk         : sl;
+  signal ddrRst         : sl;
+  signal ddrWriteMaster : AxiWriteMasterArray(1 downto 0) := (others=>AXI_WRITE_MASTER_INIT_C);
+  signal ddrReadMaster  : AxiReadMasterArray (1 downto 0) := (others=>AXI_READ_MASTER_INIT_C);
+  signal ddrWriteSlave  : AxiWriteSlaveArray (1 downto 0) := (others=>AXI_WRITE_SLAVE_INIT_C);
+  signal ddrReadSlave   : AxiReadSlaveArray  (1 downto 0) := (others=>AXI_READ_SLAVE_INIT_C);
 
+  signal pcieClk   : sl;
+  signal pcieRst   : sl;
+  signal pcieWriteMaster : AxiWriteMasterType := AXI_WRITE_MASTER_INIT_C;
+  signal pcieReadMaster  : AxiReadMasterType  := AXI_READ_MASTER_INIT_C;
+  signal pcieWriteSlave  : AxiWriteSlaveType  := AXI_WRITE_SLAVE_INIT_C;
+  signal pcieReadSlave   : AxiReadSlaveType   := AXI_READ_SLAVE_INIT_C;
+
+  signal pcie_wdata : slv(255 downto 0);
+
+  signal pcieDescWr    : sl;
+  signal pcieDescDin   : slv(31 downto 0);
+  signal pcieDescRd    : sl;
+  signal pcieDescDout  : slv(31 downto 0);
+  signal pcieDescValid : sl;
+
+  signal mem_wdata  : Slv128Array(3 downto 0);
+  signal mem_rdata  : Slv128Array(3 downto 0);
 begin
 
-  haxiWriteData <= haxiWriteMaster.wdata(haxiWriteData'range);
+  pcie_wdata <= pcieWriteMaster.wdata(255 downto 0);
   
-    GEN_LANES : for i in 0 to LANES_C-1 generate
-      U_DUT : entity work.AppToMigWrapper
-        generic map ( AXI_STREAM_CONFIG_G => sAxisConfig )
-        port map ( sAxisClk        => axisClk,
-                   sAxisRst        => axisRst,
-                   sAxisMaster     => sAxisMasters(i),
-                   sAxisSlave      => sAxisSlaves (i),
-                   sPause          => open,
-                   mAxiClk         => axiClk,
-                   mAxiRst         => axiRst,
-                   mAxiWriteMaster => mAxiWriteMasters(i),
-                   mAxiWriteSlave  => mAxiWriteSlaves (i),
-                   dscWriteMaster  => dscReadMasters  (i),
-                   dscWriteSlave   => dscReadSlaves   (i),
-                   config          => config,
-                   status          => status          (i) );
-    end generate;
+  GEN_LANES : for i in 0 to LANES_C-1 generate
+    U_DUT : entity work.AppToMigWrapper
+      generic map ( AXI_BASE_ADDR_G     => ite( i mod 2 = 0, x"00000000", x"80000000") )
+      port map ( sAxisClk        => axisClk,
+                 sAxisRst        => axisRst,
+                 sAxisMaster     => sAxisMasters(i),
+                 sAxisSlave      => sAxisSlaves (i),
+                 mAxiClk         => axiClk,
+                 mAxiRst         => axiRst,
+                 mAxiWriteMaster => mAxiWriteMasters(i),
+                 mAxiWriteSlave  => mAxiWriteSlaves (i),
+                 dscReadMaster   => dscReadMasters  (i),
+                 dscReadSlave    => dscReadSlaves   (i),
+                 config          => config,
+                 status          => status          (i) );
+    memReadMasters (i) <= axiReadMasters  (i);
+    memWriteMasters(i) <= mAxiWriteMasters(i);
+    axiReadSlaves  (i) <= memReadSlaves   (i);
+    mAxiWriteSlaves(i) <= memWriteSlaves  (i);
+    -- debugging
+    mem_wdata(i)  <= memWriteMasters(i).wdata(127 downto 0);
+    mem_rdata(i)  <= memReadSlaves  (i).rdata(127 downto 0);
+  end generate;
   
   U_DUT2 : entity work.MigToPcieWrapper
     generic map ( LANES_G => LANES_C,
@@ -123,106 +138,111 @@ begin
              --
              migStatus        => status );
 
-  GEN_AXIRS : for i in 0 to LANES_C-1 generate
-    --U_AxiSlave : entity work.AxiSlaveSim
-    --  port map ( axiClk         => axiClk,
-    --             axiRst         => axiRst,
-    --             axiReadMaster  => axiReadMasters(i),
-    --             axiReadSlave   => axiReadSlaves (i),
-    --             axiWriteMaster => mAxiWriteMasters(i),
-    --             axiWriteSlave  => mAxiWriteSlaves (i) );
-    U_AxiReadSlave : entity work.AxiReadSlaveSim
-      port map ( axiClk         => axiClk,
-                 axiRst         => axiRst,
-                 axiReadMaster  => axiReadMasters(i),
-                 axiReadSlave   => axiReadSlaves (i) );
-    U_AxiWriteSlave : entity work.AxiWriteSlaveSim
-      port map ( axiClk         => axiClk,
-                 axiRst         => axiRst,
-                 axiWriteMaster => mAxiWriteMasters(i),
-                 axiWriteSlave  => mAxiWriteSlaves (i) );
-  end generate;
-  GEN_AXIWS : for i in 0 to LANES_C+1 generate
-    U_AxiWriteslave : entity work.AxiWriteSlaveSim
-      port map ( axiClk => axiClk,
-                 axiRst => axiRst,
-                 axiWriteMaster => axiWriteMasters(i),
-                 axiWriteSlave  => axiWriteSlaves (i) );
-  end generate;
+  --GEN_AXIWS : for i in 0 to LANES_C+1 generate
+  --  U_AxiWriteslave : entity work.AxiWriteSlaveSim
+  --    port map ( axiClk => axiClk,
+  --               axiRst => axiRst,
+  --               axiWriteMaster => axiWriteMasters(i),
+  --               axiWriteSlave  => axiWriteSlaves (i) );
+--  end generate;
 
-  memWriteMasters(0) <= axiWriteMasters(0);
-  memReadMasters (0) <= axiReadMasters (0);
+  U_PcieWriteSlave : entity work.AxiWriteSlaveSim
+    port map ( axiClk => pcieClk,
+               axiRst => pcieRst,
+               axiWriteMaster => pcieWriteMaster,
+               axiWriteSlave  => pcieWriteSlave );
   
-  --U_MIG0 : entity work.Mig0
-  --  port map ( axiReady        => memReady(0),
-  --             --
-  --             axiClk          => axiClk,
-  --             axiRst          => axiRst,
-  --             axiWriteMasters => memWriteMasters(1 downto 0),
-  --             axiWriteSlaves  => memWriteSlaves (1 downto 0),
-  --             axiReadMasters  => memReadMasters (1 downto 0),
-  --             axiReadSlaves   => memReadSlaves  (1 downto 0),
-  --             --
-  --             ddrClkP         => ddrClkP (0),
-  --             ddrClkN         => ddrClkN (0),
-  --             ddrOut          => ddrOut  (0),
-  --             ddrInOut        => ddrInOut(0) );
+  U_PcieReadSlave : entity work.AxiReadSlaveSim
+    port map ( axiClk => pcieClk,
+               axiRst => pcieRst,
+               axiReadMaster => pcieReadMaster,
+               axiReadSlave  => pcieReadSlave );
 
-  process is
-    variable count : slv(31 downto 0) := (others=>'0');
-  begin
-    wait for 100 ns;
-    if axisRst = '1' then
-      wait until axisRst = '0';
-    end if;
-    if axilDone = '0' then
-      wait until axilDone = '1';
-    end if;
+  GEN_MIG : for i in 0 to 1 generate
+    U_MIG0 : entity work.MigXbarV2Wrapper
+      port map (
+        -- Slave Interfaces
+        sAxiClk          => axiClk,
+        sAxiRst          => axiRst,
+        sAxiWriteMasters => memWriteMasters(2*i+1 downto 2*i),
+        sAxiWriteSlaves  => memWriteSlaves (2*i+1 downto 2*i),
+        sAxiReadMasters  => memReadMasters (2*i+1 downto 2*i),
+        sAxiReadSlaves   => memReadSlaves  (2*i+1 downto 2*i),
+        -- Master Interface
+        mAxiClk          => ddrClk,
+        mAxiRst          => ddrRst,
+        mAxiWriteMaster  => ddrWriteMaster(i),
+        mAxiWriteSlave   => ddrWriteSlave (i),
+        mAxiReadMaster   => ddrReadMaster (i),
+        mAxiReadSlave    => ddrReadSlave  (i) );
+    U_AxiReadSlave : entity work.AxiReadSlaveSim
+      port map ( axiClk         => ddrClk,
+                 axiRst         => ddrRst,
+                 axiReadMaster  => ddrReadMaster(i),
+                 axiReadSlave   => ddrReadSlave (i));
+    U_AxiWriteSlave : entity work.AxiWriteSlaveSim
+      port map ( axiClk         => ddrClk,
+                 axiRst         => ddrRst,
+                 axiWriteMaster => ddrWriteMaster(i),
+                 axiWriteSlave  => ddrWriteSlave (i));
+  end generate;
 
-      --for i in 1 to 160 loop
-      --  wait until axiClk = '0';
-      --  dscReadMasters(0).command.tValid <= '1';
-      --  dscReadMasters(0).command.tLast  <= '1';
-      --  dscReadMasters(0).command.tData(79 downto 0) <= x"0" & -- reserved
-      --                                                  x"0" & -- tag
-      --                                                  toSlv(i,20) & toSlv(0,20) & -- address
-      --                                                  "01" & toSlv(0,6) &
-      --                                                  '1' & toSlv(4096*4,23);
-      
-      --  if dscReadSlaves(0).command.tReady = '0' then
-      --    wait until dscReadSlaves(0).command.tReady = '1';
-      --  end if;
-      --  wait until axiClk = '1';
-      --  dscReadMasters(0).command.tValid <= '0';
-      --  wait for 1 us;
-      --end loop;
-      for i in 0 to 159 loop
-        wait until (axisClk = '1' and (sAxisMasters(0).tValid = '0' or sAxisSlaves(0).tReady = '1'));
+  U_DdrRecord_0 : entity work.AxiRecord
+    generic map ( filename => "ddr_lane0.txt" )
+    port map ( axiClk    => ddrClk,
+               axiMaster => ddrWriteMaster(0) ); 
+  U_DdrRecord_1 : entity work.AxiRecord
+    generic map ( filename => "ddr_lane1.txt") 
+    port map ( axiClk    => ddrClk,
+               axiMaster => ddrWriteMaster(1) );
+ 
+  U_PCIE : entity work.PcieXbarV2Wrapper
+   port map (
+      -- Slaves
+      sAxiClk          => axiClk,
+      sAxiRst          => axiRst,
+      sAxiWriteMasters => axiWriteMasters,
+      sAxiWriteSlaves  => axiWriteSlaves,
+      -- Master
+      mAxiClk          => pcieClk,
+      mAxiRst          => pcieRst,
+      mAxiWriteMaster  => pcieWriteMaster,
+      mAxiWriteSlave   => pcieWriteSlave,
+      mAxiReadMaster   => pcieReadMaster,
+      mAxiReadSlave    => pcieReadSlave );
+
+
+  GEN_SAXIS : for k in 0 to LANES_C-1 generate
+    process is
+      variable count : slv(31 downto 0) := (others=>'0');
+    begin
+      wait for 200 ns;
+      if axisRst = '1' then
+        wait until axisRst = '0';
+      end if;
+      if axilDone = '0' then
+        wait until axilDone = '1';
+      end if;
+
+      for i in 0 to 15 loop
+        wait until (axisClk = '1' and (sAxisMasters(k).tValid = '0' or sAxisSlaves(k).tReady = '1'));
         wait until axisClk = '0';
-        sAxisMasters(0).tValid <= '1';
-        sAxisMasters(0).tLast  <= '0';
+        sAxisMasters(k).tValid <= '1';
+        sAxisMasters(k).tLast  <= '0';
         if i = 0 then
-          sAxisMasters(0).tData(63 downto 0) <= count & x"FEFEFEFE";
+          sAxisMasters(k).tData(63 downto 0) <= count & x"FEFEFEFE";
           count := count + 1;
         else
           for j in 0 to 7 loop
-            sAxisMasters(0).tData(j*8+7 downto j*8) <= toSlv(j+8*i,8);
+            sAxisMasters(k).tData(j*8+7 downto j*8) <= toSlv(j+8*i,8);
           end loop;
         end if;
       end loop;
-      sAxisMasters(0).tLast <= '1';
-      wait until (axisClk = '1' and sAxisSlaves(0).tReady = '1');
-      sAxisMasters(0).tValid <= '0';
-  end process;
-
-  --process is
-  --begin
-  --  dscReadMasters(0).status.tReady <= '0';
-  --  wait until dscReadSlaves(0).status.tValid = '1';
-  --  dscReadMasters(0).status.tReady <= '1';
-  --  wait until axiClk = '1';
-  --  wait until axiClk = '0';
-  --end process;
+      sAxisMasters(k).tLast <= '1';
+      wait until (axisClk = '1' and sAxisSlaves(k).tReady = '1');
+      sAxisMasters(k).tValid <= '0';
+    end process;
+  end generate;
 
   process is
   begin
@@ -249,7 +269,7 @@ begin
   end process;
 
   axisRst <= axiRst;
-  
+
    process is
      procedure wreg(addr : integer; data : slv(31 downto 0)) is
      begin
@@ -276,110 +296,95 @@ begin
      end procedure;
 
      variable phyAddr : slv(63 downto 0);
+     variable index   : slv(31 downto 0);
   begin
     axilDone <= '0';
     wait until axiRst='0';
     wait for 20 ns;
 
+    wreg(128,x"ABCD0000"); -- Descriptor pages addr(31:0)
+    wreg(132,x"00000000"); -- Descriptor pages addr(39:32)
     for i in 16 to 25 loop
-      phyAddr := toSlv(0,24) & toSlv(i,19) & toSlv(0,21); -- 2MB buffers
-      wreg(32768+i*8,phyAddr(31 downto 0));
-      wreg(32772+i*8,phyAddr(63 downto 32));
+      phyAddr := toSlv(15,24) & toSlv(i,19) & toSlv(0,21); -- 2MB buffers
+      wreg(136,phyAddr(31 downto 0));
+      wreg(140,toSlv(i,24) & phyAddr(39 downto 32));
     end loop;
-    
-    wreg( 0,x"ABCD0000"); -- wrBaseAddr(31:0)
-    wreg( 4,x"00000000"); -- wrBaseAddr(39:32)
-    for i in 16 to 25 loop
-      wreg(72,toSlv(i,32)); -- bufferId
+    for i in 0 to LANES_C-1 loop
+      wreg(256+i*32,x"00000000");  -- Set lanes to receive to app 0
     end loop;
-    wreg(128,x"00000000");
 
-    wreg(16, x"ABABAB00");  -- monBaseAddr
-    wreg(20, x"000000CD");
-    wreg( 4, toSlv(200,32) );-- monSampleIntv
-    wreg( 8, toSlv(  5,32) );-- monReadoutIntv
-    wreg(12, toSlv(  1,32) );-- monEnable
+    wreg(20, x"ABABA000");  -- monBaseAddr
+    wreg(24, x"000000CD");
+    wreg( 8, toSlv(200,32) );-- monSampleIntv
+    wreg(12, toSlv( 10,32) );-- monReadoutIntv
+    wreg(16, toSlv(  1,32) );-- monEnable
     
     wait for 20 ns;
     axilDone <= '1';
+
+    for i in 0 to 99 loop
+      pcieDescRd <= '0';
+      if pcieDescValid = '0' then
+        wait until pcieDescValid = '1';
+      end if;
+      phyAddr := toSlv(15,24) & pcieDescDout(18 downto 0) & toSlv(0,21); -- 2MB buffers
+      wreg(136,phyAddr(31 downto 0));
+      wreg(140,x"0" & pcieDescDout(19 downto 0) & phyAddr(39 downto 32));
+      pcieDescRd <= '1';
+      wait until pcieClk = '1';
+    end loop;
+
     wait;
-  end process;
-
-  U_INLET : entity work.AxisHistogram
-    generic map ( ADDR_WIDTH_G => 3,
-                  INLET_G      => true )
-    port map ( clk         => axiClk,
-               rst         => axiRst,
-               wen         => ssamp,
-               addr        => haddr(2 downto 0),
-               axisClk     => axiClk,
-               axisRst     => axiRst,
-               sPush       => spush,
-               mAxisMaster => haxisMaster(0),
-               mAxisSlave  => haxisSlave (0) );
-  GEN_HIST : for i in 0 to 3 generate
-    U_HIST : entity work.AxisHistogram
-    generic map ( ADDR_WIDTH_G => 4+i )
-    port map ( clk         => axiClk,
-               rst         => axiRst,
-               wen         => ssamp,
-               addr        => haddr(3+i downto 0),
-               axisClk     => axiClk,
-               axisRst     => axiRst,
-               sAxisMaster => haxisMaster(i),
-               sAxisSlave  => haxisSlave (i),
-               mAxisMaster => haxisMaster(i+1),
-               mAxisSlave  => haxisSlave (i+1) );
-  end generate;
-
-  GEN_MON_AXI : entity work.MonToPcieWrapper
-    port map ( axiClk          => axiClk,
-               axiRst          => axiRst,
-               -- AXI Stream Interface
-               sAxisMaster     => haxisMaster(4),
-               sAxisSlave      => haxisSlave (4),
-               -- AXI4 Interface to PCIe
-               mAxiWriteMaster => haxiWriteMaster,
-               mAxiWriteSlave  => haxiWriteSlave,
-               -- Configuration
-               enable          => '1',
-               mAxiAddr        => x"3fabcd0000" );
-
-     U_HaxiWriteslave : entity work.AxiWriteSlaveSim
-       port map ( axiClk => axiClk,
-                  axiRst => axiRst,
-                  axiWriteMaster => haxiWriteMaster,
-                  axiWriteSlave  => haxiWriteSlave );
-     
-  process ( axiClk, axiRst ) is
-    variable cnt : slv(3 downto 0) := (others=>'0');
-  begin
-    if rising_edge(axiClk) then
-      if cnt = toSlv(13,4) then
-        cnt := (others=>'0');
-        ssamp <= '1';
-      else
-        cnt := cnt + 1;
-        ssamp <= '0';
-      end if;
-
-      spush <= '0';
-      if haddr = toSlv(1020,10) then
-        spush <= '1';
-      end if;
-      haddr <= haddr+1;
-    end if;
+    
   end process;
 
   process is
   begin
-    ddrClkP(0) <= '1';
-    ddrClkN(0) <= '0';
+    pcieDescWr  <= '0';
+    wait until pcieWriteMaster.awvalid='0';
+    wait until (pcieWriteMaster.awvalid='1' and pcieWriteMaster.awaddr(31 downto 16)=x"ABCD");
+    if pcieWriteMaster.wvalid='0' then
+      wait until pcieWriteMaster.wvalid='1';
+    end if;
+    pcieDescWr  <= '1';
+    pcieDescDin <= resize(pcieWriteMaster.wdata(23 downto 4),32);
+    wait until pcieClk = '1';
+  end process;
+     
+  U_DescFIFO : entity work.FifoSync
+    generic map ( FWFT_EN_G => true,
+                  DATA_WIDTH_G => 32,
+                  ADDR_WIDTH_G => 8 )
+    port map ( rst    => pcieRst,
+               clk    => pcieClk,
+               wr_en  => pcieDescWr,
+               din    => pcieDescDin,
+               rd_en  => pcieDescRd,
+               dout   => pcieDescDout,
+               valid  => pcieDescValid );
+
+  process is
+  begin
+    ddrClk <= '1';
     wait for 1.667 ns;
-    ddrClkP(0) <= '0';
-    ddrClkN(0) <= '1';
+    ddrClk <= '0';
     wait for 1.667 ns;
   end process;
+
+  pcieRst <= axiRst;
+     
+  process is
+  begin
+    pcieClk <= '1';
+    wait for 2.0 ns;
+    pcieClk <= '0';
+    wait for 2.0 ns;
+  end process;
+
+  U_AxiRecord : entity work.AxiRecord
+    generic map ( filename => "pcie_record.txt" )
+    port map ( axiClk    => pcieClk,
+               axiMaster => pcieWriteMaster );
      
 end architecture;
 
